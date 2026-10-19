@@ -319,8 +319,13 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
 
     fun setAvatar(b: Bitmap?) {
         avatar = b
-        pillAvatar.setImageBitmap(b)
-        pillAvatar.visibility = if (b != null) VISIBLE else GONE
+        // No picture chosen: a person glyph in the same circle (tvOS), so the pill keeps its shape.
+        if (b != null) { pillAvatar.setImageBitmap(b); pillAvatar.scaleType = ImageView.ScaleType.CENTER_CROP; pillAvatar.setPadding(0, 0, 0, 0) }
+        else {
+            pillAvatar.setImageResource(R.drawable.ic_person); pillAvatar.scaleType = ImageView.ScaleType.FIT_CENTER
+            val p = (9 * pt).toInt(); pillAvatar.setPadding(p, p, p, p)
+        }
+        pillAvatar.visibility = VISIBLE
         if (b != null) {
             avatarIcon.clearColorFilter(); avatarIcon.setImageBitmap(b)
             avatarIcon.scaleType = ImageView.ScaleType.CENTER_CROP
