@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Prism</string>
-    <string name="app_info">App info</string>
+    <string name="app_info">App Info</string>
     <string name="dock_full">Dock is full (max %1$d apps)</string>
 
     <string name="glass_blur">Blur</string>
@@ -28,6 +28,13 @@
     <string name="about_tv">About This TV</string>
     <string name="screen_saver">Screen Saver</string>
     <string name="notifications">Notifications</string>
+    <string name="edit_home_screen">Edit Home Screen</string>
+    <string name="move_to">Move to…</string>
+    <string name="move_dock">Dock</string>
+    <string name="move_apps">Apps</string>
+    <string name="move_top">Top of Apps</string>
+    <string name="move_end">End of Apps</string>
+    <string name="delete_app">Delete App</string>
     <string name="no_notifications">No new notifications.</string>
     <string name="clear_all">Clear All</string>
     <string name="notif_open_access">Open Notification Access</string>

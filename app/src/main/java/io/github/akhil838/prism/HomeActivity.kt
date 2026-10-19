@@ -49,6 +49,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     /** Blurred snapshot of the Top Shelf shown behind the app grid (tvOS frosted background). */
     private lateinit var frost: ImageView
     private lateinit var strip: ControlStrip
+    private lateinit var appMenu: AppMenu
     /** Where Down / Back from the control strip returns (a shelf card or dock tile). */
     private var stripReturn: View? = null
     private lateinit var statusPill: View
@@ -262,6 +263,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         resetIdle()
         if (handleMoveKey(event)) return true
+        if (appMenu.isOpen && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) appMenu.back()
+            return true
+        }
         if (event.keyCode == KeyEvent.KEYCODE_BACK && strip.expanded) {
             if (event.action == KeyEvent.ACTION_UP) strip.back()
             return true
@@ -409,6 +414,8 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         strip.setAvatar(Avatar.load(this))
         statusPill = strip
         root.addView(strip, match)
+        appMenu = AppMenu(this, dims)
+        root.addView(appMenu, FrameLayout.LayoutParams(match))
         return root
     }
 
@@ -544,10 +551,55 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     // ---- move mode (tvOS long-press): tile grows + wiggles, D-pad repositions, OK/Back drops ----
 
+    /** tvOS: long-press opens the app's menu (Edit Home Screen, Move to…, App Info, Delete App). */
     override fun onLongPress(entry: AppEntry, inDock: Boolean) {
-        TileView.movingPkg = entry.packageName
+        val tile = currentFocus as? TileView ?: return
+        val pkg = entry.packageName
+        val canDelete = runCatching {
+            packageManager.getApplicationInfo(pkg, 0).flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM == 0
+        }.getOrDefault(false)
+        appMenu.show(tile, buildList {
+            add(AppMenu.Item(getString(R.string.edit_home_screen), R.drawable.ic_tv) { startMove(pkg, inDock) })
+            add(AppMenu.Item(getString(R.string.move_to), submenu = { moveTargets(pkg, inDock) }))
+            add(AppMenu.Item(getString(R.string.app_info), R.drawable.ic_info) {
+                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", pkg, null)))
+            })
+            if (canDelete) add(AppMenu.Item(getString(R.string.delete_app), R.drawable.ic_delete, danger = true) {
+                startActivity(Intent(Intent.ACTION_DELETE, android.net.Uri.fromParts("package", pkg, null)))
+            })
+        })
+    }
+
+    /** Move mode: the tile grows and wiggles; D-pad repositions it, OK/Back drops it. */
+    private fun startMove(pkg: String, inDock: Boolean) {
+        TileView.movingPkg = pkg
         movingInDock = inDock
         (currentFocus as? TileView)?.setMoving(true)
+    }
+
+    private fun moveTargets(pkg: String, inDock: Boolean): List<AppMenu.Item> = buildList {
+        val dock = store.dock(apps.map { it.packageName }.toSet())
+        if (inDock) add(AppMenu.Item(getString(R.string.move_apps)) { relocate(pkg) { d, g -> d.remove(pkg); g.add(0, pkg); false } })
+        else {
+            if (dock.size < DockStore.MAX_DOCK) add(AppMenu.Item(getString(R.string.move_dock)) { relocate(pkg) { d, g -> g.remove(pkg); d.add(pkg); true } })
+            add(AppMenu.Item(getString(R.string.move_top)) { relocate(pkg) { _, g -> g.remove(pkg); g.add(0, pkg); false } })
+            add(AppMenu.Item(getString(R.string.move_end)) { relocate(pkg) { _, g -> g.remove(pkg); g.add(pkg); false } })
+        }
+        add(AppMenu.Item(getString(R.string.hide_from_home)) {
+            store.setHidden(store.hidden().apply { add(pkg) })
+            if (inDock) store.setDock(dock.filter { it != pkg })
+            reload(keepFocus = false)
+        })
+    }
+
+    /** Apply a dock/grid change ([change] returns whether [pkg] ends up in the dock), animate, refocus it. */
+    private fun relocate(pkg: String, change: (MutableList<String>, MutableList<String>) -> Boolean) {
+        val dock = store.dock(apps.map { it.packageName }.toSet())
+        val grid = gridPkgs.toMutableList()
+        val toDock = change(dock, grid)
+        store.setDock(dock)
+        store.setGridOrder(grid)
+        rebuild(animate = true) { if (toDock) focusDock(dock.indexOf(pkg)) else focusGrid(gridPkgs.indexOf(pkg)) }
     }
 
     private fun handleMoveKey(event: KeyEvent): Boolean {
