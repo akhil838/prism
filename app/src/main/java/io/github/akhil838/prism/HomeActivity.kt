@@ -96,6 +96,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Sounds.init(this)
         repo = AppRepository(this)
         store = DockStore(this)
         glassStyle = store.glass()
@@ -260,7 +261,11 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         focusDock(0)
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        // Move mode makes its own sounds (pick up / drop); everything else gets the standard ones.
+        if (TileView.movingPkg != null) dispatchHomeKey(event) else Sounds.around(this, event) { dispatchHomeKey(event) }
+
+    private fun dispatchHomeKey(event: KeyEvent): Boolean {
         resetIdle()
         if (handleMoveKey(event)) return true
         if (appMenu.isOpen && event.keyCode == KeyEvent.KEYCODE_BACK) {
@@ -605,6 +610,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         TileView.movingPkg = pkg
         movingInDock = inDock
         (currentFocus as? TileView)?.setMoving(true)
+        Sounds.play(Sounds.Fx.PICK_UP)
     }
 
     private fun moveTargets(pkg: String, inDock: Boolean): List<AppMenu.Item> = buildList {
@@ -655,6 +661,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
                     grid.removeAt(i); dock.add(minOf(i, dock.size), pkg); movingInDock = true
                 } else {
                     Toast.makeText(this, getString(R.string.dock_full, DockStore.MAX_DOCK), Toast.LENGTH_SHORT).show()
+                    Sounds.play(Sounds.Fx.ERROR)
                     return true
                 }
             }
@@ -671,12 +678,14 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_BACK -> {
                 TileView.movingPkg = null
                 (currentFocus as? TileView)?.setMoving(false)
+                Sounds.play(Sounds.Fx.DROP)
                 return true
             }
             else -> return true
         }
         store.setDock(dock)
         store.setGridOrder(grid)
+        Sounds.play(Sounds.Fx.FOCUS)
         rebuild(animate = true) {
             // The moved tile picks up the move look itself when it regains focus (TileView.movingPkg).
             if (movingInDock) focusDock(dock.indexOf(pkg)) else focusGrid(gridPkgs.indexOf(pkg))

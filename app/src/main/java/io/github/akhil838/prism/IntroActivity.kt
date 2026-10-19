@@ -51,6 +51,7 @@ class IntroActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Sounds.init(this)
         val m = resources.displayMetrics
         dims = Dims(maxOf(m.widthPixels, m.heightPixels), minOf(m.widthPixels, m.heightPixels))
         setContentView(buildLayout())
@@ -67,7 +68,9 @@ class IntroActivity : Activity() {
         render(animate = false) // re-check state after returning from a system dialog
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean = Sounds.around(this, event) { dispatchKey(event) }
+
+    private fun dispatchKey(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP) { if (index > 0) go(index - 1) else finish() }
             return true

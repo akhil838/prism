@@ -60,6 +60,10 @@ class DockStore(context: Context) {
     fun saverCaptions(): Boolean = prefs.getBoolean("saver_captions", true)
     fun setSaverCaptions(on: Boolean) = prefs.edit().putBoolean("saver_captions", on).apply()
 
+    /** Interface sound effects (focus ticks, select, back, move mode). */
+    fun sounds(): Boolean = prefs.getBoolean("sounds", true)
+    fun setSounds(on: Boolean) = prefs.edit().putBoolean("sounds", on).apply()
+
     /** Top Shelf shows the focused app's channel recommendations (preview programs). */
     fun showReco(): Boolean = prefs.getBoolean(KEY_RECO, true)
     fun setShowReco(on: Boolean) { prefs.edit().putBoolean(KEY_RECO, on).apply(); bump() }

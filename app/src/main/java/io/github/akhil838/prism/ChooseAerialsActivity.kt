@@ -37,8 +37,11 @@ class ChooseAerialsActivity : Activity() {
     private var category: Aerials.Category? = null
     private val catViews = ArrayList<TextView>()
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean = Sounds.around(this, event) { super.dispatchKeyEvent(event) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Sounds.init(this)
         store = DockStore(this)
         setContentView(buildLayout())
         Aerials.load(this) { f ->

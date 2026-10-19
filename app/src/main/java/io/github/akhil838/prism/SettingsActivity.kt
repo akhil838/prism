@@ -80,6 +80,7 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Sounds.init(this)
         // First run, or a setup step still missing: show the slide-by-slide intro first.
         if (savedInstanceState == null && IntroActivity.needed(this)) {
             startActivity(Intent(this, IntroActivity::class.java))
@@ -115,7 +116,9 @@ class SettingsActivity : Activity() {
         }
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean = Sounds.around(this, event) { dispatchKey(event) }
+
+    private fun dispatchKey(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
             if (stack.size > 1) {
                 stack.removeLast()
@@ -374,6 +377,10 @@ class SettingsActivity : Activity() {
         rows = {
             listOf(
                 Row(getString(R.string.appearance), hero = ::appIcon, chevron = true) { push(appearancePage()) },
+                Row(getString(R.string.sound_effects), value = { getString(if (store.sounds()) R.string.on else R.string.off) },
+                    info = { getString(R.string.sound_effects_info) }) {
+                    store.setSounds(!store.sounds()); Sounds.setEnabled(store.sounds()); refresh()
+                },
                 Row(getString(R.string.top_shelf), value = { getString(if (store.showReco() && Channels.allowed(this)) R.string.on else R.string.off) }, chevron = true) { push(topShelfPage()) },
                 Row(getString(R.string.wallpaper), value = { getString(if (Wallpaper.isSet(this)) R.string.on else R.string.off) },
                     hero = { wallpaperHero() }, info = { currentInfo() }, chevron = true) { push(wallpaperPage()) },

@@ -28,6 +28,8 @@
     <string name="about_tv">About This TV</string>
     <string name="screen_saver">Screen Saver</string>
     <string name="notifications">Notifications</string>
+    <string name="sound_effects">Sound Effects</string>
+    <string name="sound_effects_info">Soft clicks when you move around, select and go back.</string>
     <string name="edit_home_screen">Edit Home Screen</string>
     <string name="move_to">Move to…</string>
     <string name="move_dock">Dock</string>
