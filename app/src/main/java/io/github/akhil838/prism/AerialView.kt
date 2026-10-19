@@ -33,7 +33,7 @@ class AerialView(context: Context) : FrameLayout(context) {
     private class Video(val file: File) : Item
 
     private val store = DockStore(context)
-    private val pt = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels) / 1080f
+    private val pt = designScale(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
     /**
      * Video on its own compositor layer; the photo and black fade views draw above it. Not a
      * TextureView: that imports every decoded frame as a GL texture in this process, which ran the

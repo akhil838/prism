@@ -118,6 +118,9 @@
     <string name="intro_reco_title">Recommendations</string>
     <string name="intro_reco_body">Show what\'s on JioHotstar, Prime Video, YouTube and other apps right on the Top Shelf when you rest on them in the dock.\n\nPrism needs permission to read the recommendation rows these apps publish. Nothing leaves your TV.</string>
     <string name="intro_allow">Allow</string>
+    <string name="intro_open_app_settings">Open App Settings</string>
+    <string name="intro_reco_blocked">Android didn\'t show the permission prompt (it was declined before). In App Settings → Permissions, allow TV listings, then come back. Or from a computer with ADB:\n\nadb shell pm grant %1$s android.permission.READ_TV_LISTINGS</string>
+    <string name="intro_reco_unavailable">✓ Not needed on this device: it has no TV recommendation rows</string>
     <string name="intro_home_title">Make Prism Your Home</string>
     <string name="intro_home_body">So the Home button on your remote opens Prism. You can switch back any time from Settings → Default Launcher.</string>
     <string name="intro_style_title">Make It Yours</string>

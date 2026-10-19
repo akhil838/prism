@@ -32,9 +32,12 @@ class IntroActivity : Activity() {
         val title: Int,
         val body: Int,
         val done: () -> Boolean = { false },
-        val primary: Int,
+        /** Label of the primary action (may change, e.g. once Android stops showing a permission prompt). */
+        val primary: () -> Int,
         val onPrimary: () -> Unit,
         val skippable: Boolean = true,
+        /** Shown when [done]: what is done. */
+        val doneState: () -> Int = { R.string.intro_done_state },
     )
 
     private lateinit var dims: Dims
@@ -48,14 +51,44 @@ class IntroActivity : Activity() {
     private lateinit var content: View
     private var index = 0
     private val slides by lazy { buildSlides() }
+    /** The 16:9 stage the slides are laid out on (the TV design), centred on any screen shape. */
+    private var stageW = 0
+    private var stageH = 0
+    private lateinit var swipe: android.view.GestureDetector
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Sounds.init(this)
         val m = resources.displayMetrics
-        dims = Dims(maxOf(m.widthPixels, m.heightPixels), minOf(m.widthPixels, m.heightPixels))
+        val w = maxOf(m.widthPixels, m.heightPixels)
+        val h = minOf(m.widthPixels, m.heightPixels)
+        // Positions are absolute for 1920x1080; sizing from the height alone pushed the text column
+        // off the right edge of 16:10 screens (tablets). Fit a 16:9 stage instead.
+        stageW = minOf(w, h * 16 / 9)
+        stageH = stageW * 9 / 16
+        dims = Dims(stageW, stageH)
+        swipe = android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, vx: Float, vy: Float): Boolean {
+                val dx = e2.x - (e1?.x ?: return false)
+                if (kotlin.math.abs(dx) < stageW / 8f || kotlin.math.abs(dx) < kotlin.math.abs(e2.y - e1.y)) return false
+                if (dx > 0) { if (index > 0) go(index - 1) } else if (canAdvance()) next()
+                return true
+            }
+        })
         setContentView(buildLayout())
         index = savedInstanceState?.getInt(KEY_INDEX) ?: 0
+    }
+
+    /** Touch: swipe between slides (left = next, right = back), like the D-pad's Skip / Back. */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        swipe.onTouchEvent(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** Swiping forward is allowed where the slide offers Skip (or Continue), never past the last slide. */
+    private fun canAdvance(): Boolean {
+        val s = slides[index]
+        return index < slides.lastIndex && (index == 0 || s.skippable || s.done())
     }
 
     override fun onSaveInstanceState(out: Bundle) {
@@ -80,22 +113,44 @@ class IntroActivity : Activity() {
 
     // ---- slides -------------------------------------------------------------------------
 
+    /**
+     * Android no longer shows the TV-listings prompt (declined before, "don't ask again"): asking
+     * returns "denied" at once, so Allow seemed to do nothing. Allow then opens Prism's app settings.
+     */
+    private var listingsBlocked = false
+
     private fun buildSlides() = listOf(
-        Slide(R.string.intro_welcome_title, R.string.intro_welcome_body, primary = R.string.intro_start, onPrimary = { next() }, skippable = false),
+        Slide(R.string.intro_welcome_title, R.string.intro_welcome_body, primary = { R.string.intro_start }, onPrimary = { next() }, skippable = false),
         Slide(
             R.string.intro_reco_title, R.string.intro_reco_body,
-            done = { Channels.allowed(this) },
-            primary = R.string.intro_allow,
-            onPrimary = { requestPermissions(arrayOf(Channels.PERMISSION), REQ_LISTINGS) },
+            // No TV channel provider (tablets, phones): nothing to read and no prompt Android could show.
+            done = { Channels.allowed(this) || !Channels.available(this) },
+            doneState = { if (Channels.available(this)) R.string.intro_done_state else R.string.intro_reco_unavailable },
+            primary = { if (listingsBlocked) R.string.intro_open_app_settings else R.string.intro_allow },
+            onPrimary = {
+                if (listingsBlocked) openAppSettings()
+                else requestPermissions(arrayOf(Channels.PERMISSION), REQ_LISTINGS)
+            },
         ),
         Slide(
             R.string.intro_home_title, R.string.intro_home_body,
             done = { isDefaultHome(this) },
-            primary = R.string.set_as_home,
+            primary = { R.string.set_as_home },
             onPrimary = { requestHome() },
         ),
-        Slide(R.string.intro_style_title, R.string.intro_style_body, primary = R.string.intro_finish, onPrimary = { finishIntro(openSettings = false) }, skippable = false),
+        Slide(R.string.intro_style_title, R.string.intro_style_body, primary = { R.string.intro_finish }, onPrimary = { finishIntro(openSettings = false) }, skippable = false),
     )
+
+    private fun openAppSettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", packageName, null)))
+        }.onFailure { showListingsHint() }
+    }
+
+    private fun showListingsHint() {
+        hintView.text = getString(R.string.intro_reco_blocked, packageName)
+        hintView.visibility = View.VISIBLE
+    }
 
     private fun next() = go(index + 1)
 
@@ -114,7 +169,11 @@ class IntroActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, results)
         if (requestCode == REQ_LISTINGS) {
-            if (Channels.allowed(this)) next() else render(animate = false)
+            if (Channels.allowed(this)) { next(); return }
+            // Denied without a rationale: Android won't prompt again, so explain and switch the button.
+            listingsBlocked = !shouldShowRequestPermissionRationale(Channels.PERMISSION)
+            render(animate = false)
+            if (listingsBlocked) showListingsHint()
         }
     }
 
@@ -157,8 +216,10 @@ class IntroActivity : Activity() {
             clipChildren = false
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF0E1420.toInt(), 0xFF1B2333.toInt(), 0xFF2A2140.toInt()))
         }
+        val stage = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
+        root.addView(stage, FrameLayout.LayoutParams(stageW, stageH, Gravity.CENTER))
         // Soft glow behind the icon.
-        root.addView(View(this).apply {
+        stage.addView(View(this).apply {
             background = GradientDrawable().apply {
                 gradientType = GradientDrawable.RADIAL_GRADIENT
                 gradientRadius = 480 * pt
@@ -175,7 +236,7 @@ class IntroActivity : Activity() {
             }
             clipToOutline = true
         }
-        root.addView(icon, FrameLayout.LayoutParams((420 * pt).toInt(), (420 * pt).toInt()).apply {
+        stage.addView(icon, FrameLayout.LayoutParams((420 * pt).toInt(), (420 * pt).toInt()).apply {
             leftMargin = (310 * pt).toInt(); topMargin = (330 * pt).toInt()
         })
 
@@ -201,12 +262,12 @@ class IntroActivity : Activity() {
         col.addView(stateView, lp(top = 24))
         col.addView(buttons, lp(top = 40 - 14).apply { leftMargin = -(14 * pt).toInt() })
         col.addView(hintView, lp(top = 30))
-        root.addView(col, FrameLayout.LayoutParams((820 * pt).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL).apply {
+        stage.addView(col, FrameLayout.LayoutParams((820 * pt).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL).apply {
             leftMargin = (960 * pt).toInt()
         })
 
         dots = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        root.addView(dots, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+        stage.addView(dots, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = (70 * pt).toInt()
         })
         return root
@@ -224,8 +285,22 @@ class IntroActivity : Activity() {
 
     private fun button(label: Int, primary: Boolean, onClick: () -> Unit): View {
         val h = (76 * pt).toInt()
-        val bg = GradientDrawable().apply { cornerRadius = h / 2f; setColor(if (primary) 0x40FFFFFF else 0x1AFFFFFF) }
-        return TextView(this).apply {
+        val idle = if (primary) 0x40FFFFFF else 0x1AFFFFFF
+        val bg = GradientDrawable().apply { cornerRadius = h / 2f; setColor(idle) }
+        // Lit (white, zoomed) while focused by the D-pad or held by a finger: touch mode has no focus,
+        // so on a touch screen the buttons gave no feedback at all.
+        fun TextView.lit(on: Boolean) {
+            bg.setColor(if (on) Color.WHITE else idle)
+            setTextColor(if (on) 0xFF1C1C1E.toInt() else Color.WHITE)
+            animate().scaleX(if (on) 1.08f else 1f).scaleY(if (on) 1.08f else 1f).setDuration(150).start()
+        }
+        return object : TextView(this) {
+            override fun setPressed(pressed: Boolean) {
+                val changed = pressed != isPressed
+                super.setPressed(pressed)
+                if (changed && !isFocused) lit(pressed)
+            }
+        }.apply {
             text = getString(label)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_PX, 30 * pt)
@@ -235,11 +310,7 @@ class IntroActivity : Activity() {
             isClickable = true
             background = bg
             setPadding((44 * pt).toInt(), 0, (44 * pt).toInt(), 0)
-            setOnFocusChangeListener { v, has ->
-                bg.setColor(if (has) Color.WHITE else if (primary) 0x40FFFFFF else 0x1AFFFFFF)
-                (v as TextView).setTextColor(if (has) 0xFF1C1C1E.toInt() else Color.WHITE)
-                v.animate().scaleX(if (has) 1.08f else 1f).scaleY(if (has) 1.08f else 1f).translationZ(if (has) 14 * pt else 0f).setDuration(150).start()
-            }
+            setOnFocusChangeListener { v, has -> (v as TextView).lit(has) }
             setOnClickListener { onClick() }
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, h).apply { rightMargin = (24 * pt).toInt() }
         }
@@ -252,13 +323,13 @@ class IntroActivity : Activity() {
             bodyView.setText(s.body)
             val done = s.done()
             stateView.visibility = if (done) View.VISIBLE else View.GONE
-            stateView.setText(R.string.intro_done_state)
+            stateView.setText(s.doneState())
             hintView.visibility = View.GONE
             buttons.removeAllViews()
             if (done) {
                 buttons.addView(button(R.string.intro_continue, primary = true) { next() })
             } else {
-                buttons.addView(button(s.primary, primary = true, s.onPrimary))
+                buttons.addView(button(s.primary(), primary = true, s.onPrimary))
                 if (s.skippable) buttons.addView(button(R.string.intro_skip, primary = false) { next() })
             }
             if (index == slides.lastIndex) {
@@ -306,6 +377,6 @@ class IntroActivity : Activity() {
         /** Show the intro on first run, or when a required step is still missing. */
         fun needed(ctx: Context): Boolean =
             !ctx.getSharedPreferences("prism", MODE_PRIVATE).getBoolean(KEY_DONE, false) ||
-                !isDefaultHome(ctx) || !Channels.allowed(ctx)
+                !isDefaultHome(ctx) || (Channels.available(ctx) && !Channels.allowed(ctx))
     }
 }

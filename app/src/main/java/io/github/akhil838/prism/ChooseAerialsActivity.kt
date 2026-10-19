@@ -28,7 +28,7 @@ import android.widget.TextView
 class ChooseAerialsActivity : Activity() {
     private lateinit var store: DockStore
     private val m get() = resources.displayMetrics
-    private val pt get() = minOf(m.widthPixels, m.heightPixels) / 1080f
+    private val pt get() = designScale(m.widthPixels, m.heightPixels)
     private lateinit var catList: LinearLayout
     private lateinit var grid: GridLayout
     private lateinit var scroll: ScrollView

@@ -16,21 +16,29 @@ import android.widget.ImageView
 import android.widget.TextView
 
 /**
- * Geometry measured from real tvOS 26 Home Screen captures (1568x892 frames), expressed as
- * fractions of the screen so it scales to any TV. 1 pt = 1 px at 1080p.
+ * The app's one design unit: Prism is designed at 1920x1080 (tvOS: 1 pt = 1 px at 1080p), fitted
+ * inside any screen. 1 on a 1080p TV, 2 on 4K; on other shapes (16:10 tablets, ultra-wide) the side
+ * that would overflow sets the scale. Scaling from the height alone pushed absolute layouts (Settings,
+ * Choose Aerials, setup) off the right edge of 16:10 screens.
+ */
+fun designScale(w: Int, h: Int): Float = minOf(maxOf(w, h) / 1920f, minOf(w, h) / 1080f)
+
+/**
+ * Geometry measured from real tvOS 26 Home Screen captures (1568x892 frames): sizes in design units
+ * ([designScale]), positions as fractions of the screen, so it fits any TV or tablet.
  */
 class Dims(screenW: Int, screenH: Int) {
-    val pt = screenH / 1080f
+    val pt = designScale(screenW, screenH)
     val columns = 6
     val safeTop = (60 * pt).toInt()
     val safeSide = (80 * pt).toInt()
-    val tileW = (screenW * 0.1307f).toInt()   // 205/1568
+    val tileW = (250.944f * pt).toInt()      // 205/1568 of 1920
     val tileH = tileW * 3 / 5                   // 5:3 icons
-    val cellW = (screenW * 0.1556f).toInt()   // 244/1568 column pitch
+    val cellW = (298.752f * pt).toInt()      // 244/1568 column pitch
     val gap = cellW - tileW
     val margin = (screenW - (columns - 1) * cellW - tileW) / 2
     val labelH = (40 * pt).toInt()
-    val cellH = (screenH * 0.240f).toInt()    // 214/892 grid row pitch (room for the name)
+    val cellH = (259.2f * pt).toInt()        // 214/892 of 1080: grid row pitch (room for the name)
     val dockCellH = tileH
     val radius = tileH * 0.14f
     val focusScale = 1.21f                      // 205 -> 249 px focused

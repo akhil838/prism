@@ -72,6 +72,9 @@ object Channels {
     const val PERMISSION = "android.permission.READ_TV_LISTINGS"
     fun allowed(ctx: Context) = ctx.checkSelfPermission(PERMISSION) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
+    /** The device has Android TV's channel provider at all (tablets and phones don't: nothing to read there). */
+    fun available(ctx: Context) = ctx.packageManager.resolveContentProvider(TvContract.AUTHORITY, 0) != null
+
     private fun query(ctx: Context, pkg: String): List<Program> {
         val cr = ctx.contentResolver
         // Browsable preview channels of this app, in the order the app created them.
