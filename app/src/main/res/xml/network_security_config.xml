@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Apple's aerial CDN (sylvan.apple.com) chains to "Apple Root CA", which Android's system store
+  doesn't carry (Apple devices do). Trust it for that host only; everything else uses system CAs.
+  apple_root_ca.cer: https://www.apple.com/appleca/AppleIncRootCertificate.cer
+  SHA-256 B0:B1:73:0E:CB:C7:FF:45:05:14:2C:49:F1:29:5E:6E:DA:6B:CA:ED:7E:2C:68:C5:BE:91:B5:A1:10:01:F0:24
+-->
+<network-security-config>
+    <domain-config>
+        <domain includeSubdomains="false">sylvan.apple.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/apple_root_ca" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Platform theme only: no AppCompat/Material, keeps the APK and RAM small. -->
+    <style name="Theme.Prism" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/backdrop</item>
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:windowDisablePreview">false</item>
+        <item name="android:colorAccent">#FFFFFFFF</item>
+    </style>
+
+    <style name="Theme.Prism.Dialog" parent="@android:style/Theme.DeviceDefault.Dialog.Alert" />
+</resources>

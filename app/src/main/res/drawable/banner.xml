@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TV banner: the Prism triangle, centred. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#FF1C2733" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#D9FFFFFF" android:pathData="M115,52L160,52L160,127Z" />
+    <path android:fillColor="#73FFFFFF" android:pathData="M160,52L205,52L160,127Z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="3.5" android:strokeLineCap="round" android:pathData="M115,52L205,52" />
+</vector>

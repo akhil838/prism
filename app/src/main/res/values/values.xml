@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Prism</string>
+    <string name="app_info">App info</string>
+    <string name="dock_full">Dock is full (max %1$d apps)</string>
+
+    <string name="glass_blur">Blur</string>
+    <string name="glass_dim">Dim</string>
+    <string name="glass_gloss">Gloss</string>
+    <string name="glass_refraction">Refraction</string>
+    <string-array name="glass_levels">
+        <item>Off</item>
+        <item>Low</item>
+        <item>Medium</item>
+        <item>High</item>
+        <item>Max</item>
+    </string-array>
+
+    <string name="remove_picture">Remove picture</string>
+    <string name="avatar_failed">Couldn\'t download avatars. Check the internet connection.</string>
+
+    <string name="settings">Settings</string>
+    <string name="appearance">Appearance</string>
+    <string name="profile_picture_title">Profile Picture</string>
+    <string name="apps">Apps</string>
+    <string name="default_launcher">Default Launcher</string>
+    <string name="about">About</string>
+    <string name="about_tv">About This TV</string>
+    <string name="screen_saver">Screen Saver</string>
+    <string name="notifications">Notifications</string>
+    <string name="no_notifications">No new notifications.</string>
+    <string name="clear_all">Clear All</string>
+    <string name="notif_open_access">Open Notification Access</string>
+    <string name="notif_access_body">Allow Prism to show your apps\' notifications here. If your TV has no Notification access setting, run once from a computer with ADB:\n\nadb shell cmd notification allow_listener %1$s</string>
+    <string name="saver_note">Apple TV aerials or your own photos and videos. Starts on the Home screen after the time below; to show it over other apps too, make Prism Aerials the TV\'s screen saver.</string>
+    <string name="saver_preview">Preview</string>
+    <string name="saver_current">Current Selection</string>
+    <string name="saver_prefs">Screen Saver Preferences</string>
+    <string name="saver_aerials">Aerials</string>
+    <string name="saver_photos">Photos &amp; Videos</string>
+    <string name="saver_aerials_note">Choose which aerials you\'d like to see, including landscape, cityscape, underwater and Earth. With a download frequency set, new aerials download periodically and play without buffering.</string>
+    <string name="saver_choose">Choose Aerials</string>
+    <string name="choose_subtitle">The screen saver rotates through these aerials. Hide any you don\'t want included.</string>
+    <string name="saver_shown">%1$d of %2$d</string>
+    <string name="hide_all">Hide All</string>
+    <string name="show_all">Show All</string>
+    <string name="aerial_hidden">Hidden</string>
+    <string name="saver_frequency">Download Frequency</string>
+    <string name="saver_frequency_note">How often Prism downloads a new aerial to the TV (up to 3 are kept, about 0.5–0.9 GB). Stream Only plays them straight from Apple and stores nothing.</string>
+    <string name="saver_cached">%d downloaded on this TV</string>
+    <string name="freq_stream">Stream Only</string>
+    <string name="freq_daily">Daily</string>
+    <string name="freq_weekly">Weekly</string>
+    <string name="freq_monthly">Monthly</string>
+    <string name="slides_note">Plays the photos and videos in %1$s, the same folder used for wallpapers.</string>
+    <string name="slides_time">Time per Photo</string>
+    <string name="slides_seconds">%d seconds</string>
+    <string name="slides_shuffle">Shuffle</string>
+    <string name="saver_use_this">Use as Screen Saver</string>
+    <string name="slides_empty">No photos or videos yet. Copy some to %1$s</string>
+    <string name="saver_start_after">Start After</string>
+    <string name="saver_never">Never</string>
+    <string name="saver_minutes">%d minutes</string>
+    <string name="saver_quality">Video Quality</string>
+    <string name="quality_h264">Works on every TV. Largest stream.</string>
+    <string name="quality_hevc">Same picture, about 40% less data. Needs HEVC (most TVs since 2016).</string>
+    <string name="quality_4k">For 4K TVs on a fast connection.</string>
+    <string name="saver_captions">Show Locations</string>
+    <string name="saver_system">Use with Other Apps</string>
+    <string name="saver_system_info">Opens the TV\'s screen saver settings: choose Prism Aerials.</string>
+    <string name="saver_adb_title">Screen Saver Setting Missing?</string>
+    <string name="saver_adb_body">Some TVs hide the screen saver choice. From a computer with ADB debugging enabled on the TV, run:\n\nadb shell settings put secure screensaver_components %1$s\nadb shell settings put secure screensaver_enabled 1\n\nThe TV then shows Prism Aerials whenever it would start its own screen saver.</string>
+    <string name="saver_loading">Loading aerials…</string>
+    <string name="saver_offline">Can\'t reach Apple\'s aerial videos. Check the internet connection.</string>
+    <string name="saver_dream_name">Prism Aerials</string>
+    <string name="wallpaper_aerials">Apple Aerials</string>
+    <string name="aerial_info">Apple TV aerial videos as your wallpaper. Each one downloads once (about 100–500 MB). Clips you\'re not using are deleted 6 hours after you switch away; their previews stay.</string>
+    <string name="aerial_download">Downloading… %d%%</string>
+    <string name="aerial_download_failed">Download failed. Check the connection and try again.</string>
+    <string name="aerial_set">%1$s is now your wallpaper</string>
+    <string name="on">On</string>
+    <string name="off">Off</string>
+    <string name="done">Done</string>
+    <string name="reset_default">Reset to Default</string>
+    <string name="hidden">Hidden</string>
+    <string name="shown">Shown</string>
+    <string name="show_on_home">Show on Home Screen</string>
+    <string name="hide_from_home">Hide from Home Screen</string>
+    <string name="avatar_note">Avatars by DiceBear (CC0 styles). The picture is downloaded once and kept on this TV.</string>
+    <string name="welcome">Welcome to Prism</string>
+    <string name="setup_intro">Prism replaces your TV\'s Home screen with a fast, ad-free, tvOS-style one. Set it as the default launcher so the Home button opens it.</string>
+    <string name="setup_done">Prism is your default launcher. The Home button opens it.</string>
+    <string name="set_as_home">Set Prism as Home Screen</string>
+    <string name="setup_adb_title">Home Button Still Opens the Old Launcher?</string>
+    <string name="setup_adb_body">Some TVs (Google TV, TCL) always prefer their built-in launcher. From a computer on the same network, with ADB debugging enabled on the TV, run:\n\nadb shell pm disable-user --user 0 %1$s\n\nTo undo:\nadb shell pm enable %1$s\n\nPrism (%2$s) then becomes the Home screen.</string>
+    <string name="continue_to_settings">Continue to Settings</string>
+    <string name="about_body">Prism %1$s\n\nA lightweight tvOS-inspired launcher. No background services, no tracking. Avatars: DiceBear (CC0). Gallery photos: Unsplash via Lorem Picsum.</string>
+
+    <string name="wallpaper">Wallpaper</string>
+    <string name="wallpaper_gallery">Photo Gallery</string>
+    <string name="wallpaper_local">From TV Storage</string>
+    <string name="wallpaper_none">None (App Artwork)</string>
+    <string name="wallpaper_downloading">Downloading wallpaper…</string>
+    <string name="wallpaper_local_note">Copy photos (JPG, PNG, WebP) or videos (MP4, WebM, MKV) to:\n%1$s\n\nFor example: adb push clip.mp4 %1$s/\nVideos play muted and loop, and pause while another app is open.</string>
+    <string name="current_prefix">Current: %1$s</string>
+    <string name="loading">Loading details…</string>
+    <string name="gallery_info">Original %1$d×%2$d · Photo by %3$s (Unsplash)\nSaved as 1920×1080 (1080p) JPEG</string>
+    <string name="gallery_info_short">Unsplash photo · saved as 1920×1080 (1080p) JPEG</string>
+
+    <string name="intro_welcome_title">Welcome to Prism</string>
+    <string name="intro_welcome_body">A fast, ad-free Home screen for your TV, inspired by Apple TV: a glass dock, a Top Shelf with each app\'s picks, and your own wallpapers.\n\nThis takes a minute: one step per screen.</string>
+    <string name="intro_start">Get Started</string>
+    <string name="intro_reco_title">Recommendations</string>
+    <string name="intro_reco_body">Show what\'s on JioHotstar, Prime Video, YouTube and other apps right on the Top Shelf when you rest on them in the dock.\n\nPrism needs permission to read the recommendation rows these apps publish. Nothing leaves your TV.</string>
+    <string name="intro_allow">Allow</string>
+    <string name="intro_home_title">Make Prism Your Home</string>
+    <string name="intro_home_body">So the Home button on your remote opens Prism. You can switch back any time from Settings → Default Launcher.</string>
+    <string name="intro_style_title">Make It Yours</string>
+    <string name="intro_style_body">Pick a wallpaper (photos or videos), a profile picture, and tune the glass: blur, dim, gloss and refraction. Wallpaper gallery and avatars download over the internet.\n\nLong-press any app on Home to move it.</string>
+    <string name="intro_finish">Finish</string>
+    <string name="intro_open_settings">Open Settings</string>
+    <string name="intro_skip">Skip</string>
+    <string name="intro_continue">Continue</string>
+    <string name="intro_done_state">✓ Done</string>
+    <string name="intro_run_again">Run Setup Again</string>
+
+    <string name="top_shelf">Top Shelf</string>
+    <string name="top_shelf_note">When you rest on an app in the dock, show that app\'s channel previews (its recommended movies and shows) with artwork, and let you open them directly.</string>
+    <string name="show_previews">Show Channel Previews</string>
+    <string name="allow_previews">Allow Access to Previews</string>
+
+    <color name="backdrop">#FF0B0F14</color>
+</resources>
