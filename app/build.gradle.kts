@@ -40,6 +40,19 @@ android {
         }
     }
 
+    // Per-CPU APKs on request (CI: -Pabis=arm64-v8a,armeabi-v7a [-Puniversal=true]). Prism has no
+    // native code, so every APK runs on any CPU; the split only labels the download per architecture.
+    // Without -Pabis the build makes one universal APK, as before.
+    val abis = (findProperty("abis") as String?)?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+    splits {
+        abi {
+            isEnable = abis.isNotEmpty()
+            reset()
+            include(*abis.toTypedArray())
+            isUniversalApk = (findProperty("universal") as String?).toBoolean()
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
