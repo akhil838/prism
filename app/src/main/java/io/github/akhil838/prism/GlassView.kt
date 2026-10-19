@@ -17,7 +17,6 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
-import java.util.WeakHashMap
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -69,7 +68,11 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
     private var indices = ShortArray(0)
     private val inv = Matrix()
     private val layerMatrix = Matrix()
-    private val layerPaints = WeakHashMap<Bitmap, Paint>()
+    /**
+     * Shader paint for the current source bitmaps only. (A WeakHashMap never released entries: each
+     * value's BitmapShader holds its key, so every old backdrop/tint/frost bitmap stayed alive.)
+     */
+    private val layerPaints = HashMap<Bitmap, Paint>()
 
     init {
         setWillNotDraw(false)
@@ -199,6 +202,11 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
 
     private fun drawRefracted(canvas: Canvas) {
         if (verts.isEmpty()) return
+        // Forget shaders for bitmaps no source shows any more.
+        if (layerPaints.size > sources.size) {
+            val live = sources.mapNotNullTo(HashSet()) { (it.drawable as? BitmapDrawable)?.bitmap }
+            layerPaints.keys.retainAll(live)
+        }
         for (iv in sources) {
             if (iv.visibility != VISIBLE || iv.alpha <= 0.01f) continue
             val d = iv.drawable as? BitmapDrawable ?: continue

@@ -119,11 +119,7 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
         row.clipChildren = false; row.clipToPadding = false
-        // Always present and "drawing" its whole width, even folded (circles at alpha 0): over a
-        // video wallpaper Android reports undrawn areas as transparent and the compositor skips
-        // them, and that report reaches it a few frames late, so a row that only appeared on
-        // expand had its circles cut off. A drawing row keeps its full area claimed.
-        row.setWillNotDraw(false)
+        // Always laid out; folded, its circles sit at alpha 0 and are not focusable.
         time.alpha = 0f
         row.addView(time, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = (10 * pt).toInt() })
         addCircle(R.drawable.ic_bell, withBadge = true) { togglePanel() }
@@ -362,7 +358,6 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
         expanded = true
         hidePanel()
         pill.animate().alpha(0f).scaleX(0.9f).setDuration(160).start()
-        claimScreen(true)
         circles.forEach { it.isFocusable = true }
         time.alpha = 0f
         time.animate().alpha(1f).setStartDelay(120).setDuration(220).start()
@@ -390,20 +385,10 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
         }
         time.animate().alpha(0f).setStartDelay(0).setDuration(150).start()
         circles.forEach { it.isFocusable = false }
-        row.postDelayed({ if (!expanded) claimScreen(false) }, 230)
         pill.animate().alpha(1f).scaleX(1f).setStartDelay(80).setDuration(200).start()
     }
 
     private fun leave() { collapse(); actions.leave() }
-
-    /**
-     * While open, the strip counts as drawing the whole screen, so the notifications panel (which
-     * appears later, on OK) is never in an area the compositor still treats as transparent.
-     */
-    private fun claimScreen(on: Boolean) {
-        setWillNotDraw(!on)
-        requestLayout() // transparent regions are re-gathered on layout
-    }
 
     /** Back: panel first, then the strip. */
     fun back() { if (panel.visibility == VISIBLE) hidePanel() else leave() }

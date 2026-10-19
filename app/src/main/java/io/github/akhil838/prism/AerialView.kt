@@ -10,8 +10,7 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
@@ -34,8 +33,11 @@ class AerialView(context: Context) : FrameLayout(context) {
 
     private val store = DockStore(context)
     private val pt = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels) / 1080f
-    /** Hardware-composited video layer; the photo and black fade views draw above it. */
-    private val video = SurfaceView(context)
+    /**
+     * Video drawn inside our window; the photo and black fade views draw above it. Not a SurfaceView:
+     * a new player per clip on a SurfaceView leaks compositor buffers on Android < 14 TVs.
+     */
+    private val video = TextureView(context)
     private val photo = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; visibility = GONE }
     private val black = View(context).apply { setBackgroundColor(Color.BLACK) }
     private val caption = TextView(context).apply {
@@ -79,11 +81,12 @@ class AerialView(context: Context) : FrameLayout(context) {
             leftMargin = (90 * pt).toInt(); bottomMargin = (70 * pt).toInt(); rightMargin = (90 * pt).toInt()
         })
         addView(status, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        video.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(h: SurfaceHolder) { surface = h.surface; if (running && current == null) next() }
-            override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hh: Int) = Unit
-            override fun surfaceDestroyed(h: SurfaceHolder) { release(); surface = null } // owned by the SurfaceView
-        })
+        video.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) { surface = Surface(st); if (running && current == null) next() }
+            override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) = Unit
+            override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean { release(); surface?.release(); surface = null; return true }
+            override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) = Unit
+        }
     }
 
     fun start() {

@@ -64,11 +64,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private var wallpaper: android.graphics.Bitmap? = null
     private lateinit var shade: View
     /**
-     * Video wallpaper on a SurfaceView: the TV's hardware compositor shows it on its own layer.
-     * (A TextureView copied every frame through the GPU into this window, which stuttered on the TCL.)
-     * It sits *below* the backdrop layers, which turn clear to reveal it (see [crossfadeBackdrop]).
+     * Video wallpaper on a TextureView, at the bottom of the stack; the backdrop layers above it go
+     * clear to reveal it (see [crossfadeBackdrop]). Not a SurfaceView: on Android < 14 TVs (TCL /
+     * Realtek) the compositor keeps a buffer cache per video producer that is never returned, so
+     * every new player drained the shared graphics memory until the renderer crashed (GL OOM).
      */
-    private lateinit var videoView: android.view.SurfaceView
+    private lateinit var videoView: android.view.TextureView
+    private var videoSurface: android.view.Surface? = null
     private var player: android.media.MediaPlayer? = null
     /** First frame is on screen: the poster can fade away. */
     private var videoRendering = false
@@ -101,8 +103,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         screenW = maxOf(m.widthPixels, m.heightPixels)
         dims = Dims(maxOf(m.widthPixels, m.heightPixels), screenH)
         setContentView(buildLayout())
-        // Home draws its own backdrop / frost everywhere: a window background is just one more
-        // full-screen fill, and it would stop Android treating the area over the video as transparent.
+        // Home draws its own backdrop / frost everywhere: a window background is one more full-screen fill.
         window.setBackgroundDrawable(null)
         registerSystemReceiver(packageReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -136,7 +137,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     override fun onStart() {
         super.onStart()
         started = true
-        if (videoPath != null && videoView.holder.surface.isValid) openPlayer(videoView.holder.surface)
+        if (videoPath != null) videoView.surfaceTexture?.let { openPlayer(surfaceFor(it)) }
     }
 
     override fun onPause() {
@@ -185,12 +186,23 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         }
     }
 
-    /** Decode only while the video wallpaper is actually visible (not under the shelf or grid frost). */
+    /**
+     * Decode only while the video wallpaper is visible (not under the shelf tint or the grid frost),
+     * but pause only once it has stayed hidden for [VIDEO_PAUSE_DELAY_MS]. On TVs like the TCL, every
+     * pause/resume reconfigures the hardware decoder, so quick trips between the dock and the grid,
+     * or across dock apps, must not touch the player at all.
+     */
     private fun updateVideoPlayback() {
         val p = player ?: return
         if (!playerReady) return
-        val visible = !videoCovered && !inGrid
-        runCatching { if (visible && !p.isPlaying) p.start() else if (!visible && p.isPlaying) p.pause() }
+        main.removeCallbacks(pauseVideo)
+        if (!videoCovered && !inGrid) runCatching { if (!p.isPlaying) p.start() }
+        else main.postDelayed(pauseVideo, VIDEO_PAUSE_DELAY_MS)
+    }
+
+    private val pauseVideo = Runnable {
+        val p = player ?: return@Runnable
+        if (playerReady && (videoCovered || inGrid)) runCatching { if (p.isPlaying) p.pause() }
     }
 
     private fun releasePlayer() {
@@ -198,6 +210,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         player?.release()
         player = null
     }
+
+    /** One Surface per SurfaceTexture, reused across players (released with the texture). */
+    private fun surfaceFor(st: android.graphics.SurfaceTexture): android.view.Surface =
+        videoSurface ?: android.view.Surface(st).also { videoSurface = it }
 
     /** Poster on the bottom backdrop layer, instantly (no fade): the video layer below is empty. */
     private fun showPosterNow() {
@@ -221,7 +237,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         videoPath = path
         videoW = 0; videoH = 0
         videoView.visibility = if (path != null) View.VISIBLE else View.GONE
-        if (path != null && started && videoView.holder.surface.isValid) openPlayer(videoView.holder.surface)
+        if (path != null && started) videoView.surfaceTexture?.let { openPlayer(surfaceFor(it)) }
     }
 
     /** Pick up changes made in Settings (glass, avatar, hidden apps). */
@@ -266,13 +282,16 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         val match = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
         // Video wallpaper: muted loop at the very bottom; the backdrop layers above it go clear to show it.
-        videoView = android.view.SurfaceView(this).apply {
+        videoView = android.view.TextureView(this).apply {
             visibility = View.GONE
-            holder.addCallback(object : android.view.SurfaceHolder.Callback {
-                override fun surfaceCreated(h: android.view.SurfaceHolder) { if (started) openPlayer(h.surface) }
-                override fun surfaceChanged(h: android.view.SurfaceHolder, f: Int, w: Int, hh: Int) = Unit
-                override fun surfaceDestroyed(h: android.view.SurfaceHolder) = releasePlayer()
-            })
+            surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) { if (started) openPlayer(surfaceFor(st)) }
+                override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) = Unit
+                override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
+                    releasePlayer(); videoSurface?.release(); videoSurface = null; return true
+                }
+                override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) = Unit
+            }
         }
         root.addView(videoView, FrameLayout.LayoutParams(match))
 
@@ -364,9 +383,8 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             clipChildren = false
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
-            // No decorations or edge glow: it draws nothing itself. RecyclerView decides this in its
-            // constructor (before overScrollMode is set), and a "drawing" full-screen list would hide
-            // the transparent area over a video wallpaper from the compositor.
+            // No decorations or edge glow: it draws nothing itself (RecyclerView decides this in its
+            // constructor, before overScrollMode is set).
             setWillNotDraw(true)
             isFocusable = false
             descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
@@ -647,8 +665,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     }
 
     /**
-     * Fade [v] to [to]. A view at alpha 0 is set GONE: Android then reports its area as transparent,
-     * so over a video wallpaper the TV's compositor skips it instead of blending a full-screen layer.
+     * Fade [v] to [to]. A view at alpha 0 is set GONE, so it costs nothing (layout, draw) while hidden.
      */
     private fun fadeView(v: View, to: Float, ms: Long, update: (() -> Unit)? = null, end: (() -> Unit)? = null) {
         if (to > 0f) v.visibility = View.VISIBLE
@@ -807,7 +824,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         crossfadeBackdrop(tint)
         // The tint covers the video wallpaper: pause it once the fade has finished.
         videoCovered = true
-        main.postDelayed({ updateVideoPlayback() }, FADE_MS)
+        updateVideoPlayback()
         adapter.dockGlass?.setArtwork(tint, 0)
     }
 
@@ -881,13 +898,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             fadeView(frost, if (grid) 1f else 0f, 320, update = { adapter.dockGlass?.invalidate() },
                 end = { if (inGrid) setUnderGrid(View.INVISIBLE); updateVideoPlayback() })
         }
-        if (grid && backdropClear && videoPath != null) {
-            // Over the bare video the compositor skips the area above the dock (transparent region).
-            // Making the frost visible updates that region, but via the window manager, a few frames
-            // after our own drawing: start the fade once it has landed, or the frost pops in at the end.
-            frost.alpha = 0f; frost.visibility = View.VISIBLE
-            main.postDelayed({ if (inGrid) fade() }, REGION_SETTLE_MS)
-        } else fade()
+        fade()
         // tvOS: time + profile only show on the Top Shelf, not while browsing apps.
         statusPill.animate().alpha(if (grid) 0f else 1f).setDuration(200).start()
     }
@@ -907,10 +918,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         // Restore only what was showing; fully faded layers stay GONE.
         fun set(view: View) { view.visibility = if (v == View.VISIBLE && view.alpha <= 0f) View.GONE else v }
         set(backA); set(backB); shade.visibility = v
-        // Video: never hidden (that destroys the surface and decoder; recreating them on every trip
-        // into the grid exhausted the memory the TV's decoder shares with its GPU, crashing the GPU
-        // renderer). Moving it off-screen keeps the paused player and lets the compositor skip it.
-        videoView.translationX = if (v == View.VISIBLE) 0f else screenW * 2f
+        // Hidden, the TextureView stops drawing new frames (its SurfaceTexture and player survive;
+        // the player pauses after VIDEO_PAUSE_DELAY_MS).
+        if (videoPath != null) videoView.visibility = v
     }
 
     /** tvOS: after a few idle minutes on Home, the aerial screen saver starts (Settings → Screen Saver). */
@@ -938,7 +948,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             c.scale(sx, sy); c.translate(dx, dy); draw(c)
             c.restoreToCount(save)
         }
-        // A SurfaceView can't be read back cheaply: the video wallpaper's poster stands in for it.
+        // Reading back the video frame is not worth it for a 160x90 blur: the poster stands in for it.
         if (videoPath != null) wallpaper?.let { c.drawBitmap(it, null, android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat()), null) }
         layer(backA) { backA.draw(it) }
         layer(backB) { backB.draw(it) }
@@ -975,8 +985,8 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         const val CARD_FOCUS_SCALE = 1.08f
         /** Darkening baked into the frosted background while browsing the grid. */
         const val GRID_DIM = 0.15f
-        /** Time for a transparent-region change to reach the compositor (measured on a TCL TV). */
-        const val REGION_SETTLE_MS = 150L
+        /** A hidden video wallpaper is paused only after staying hidden this long (see updateVideoPlayback). */
+        const val VIDEO_PAUSE_DELAY_MS = 3000L
         val SCROLL_EASE = DecelerateInterpolator(2f)
     }
 }
