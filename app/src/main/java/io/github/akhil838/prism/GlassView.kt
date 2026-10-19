@@ -99,6 +99,7 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        glassDirty = true
         bounds.set(0f, 0f, w.toFloat(), h.toFloat())
         clip.reset()
         clip.addRoundRect(bounds, radius, radius, Path.Direction.CW)
@@ -220,7 +221,35 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
 
     // ---- draw ---------------------------------------------------------------------------
 
+    /**
+     * The glass itself (refraction mesh, frost, tint, rim) is cached in a GPU layer: tiles animating
+     * on top (focus, move-mode wiggle and reflow) no longer re-run the mesh every frame. It is redrawn
+     * only when [invalidate] is called — backdrop crossfades, scrolling and style changes do that.
+     */
+    private val glassNode = android.graphics.RenderNode("glass").apply { setUseCompositingLayer(true, null) }
+    private var glassDirty = true
+
+    override fun invalidate() {
+        glassDirty = true
+        super.invalidate()
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
+        if (canvas.isHardwareAccelerated && width > 0 && height > 0) {
+            if (glassDirty || !glassNode.hasDisplayList()) {
+                glassNode.setPosition(0, 0, width, height)
+                drawGlass(glassNode.beginRecording(width, height))
+                glassNode.endRecording()
+                glassDirty = false
+            }
+            canvas.drawRenderNode(glassNode)
+        } else {
+            drawGlass(canvas)
+        }
+        super.dispatchDraw(canvas)
+    }
+
+    private fun drawGlass(canvas: Canvas) {
         buildMesh()
         getLocationInWindow(location)
         canvas.save()
@@ -259,7 +288,6 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
         canvas.drawRoundRect(i1, i1, width - i1, height - i1, radius - i1, radius - i1, rimPaint)
         val i2 = rimWidth * 2
         canvas.drawRoundRect(i2, i2, width - i2, height - i2, radius - i2, radius - i2, innerPaint)
-        super.dispatchDraw(canvas)
     }
 }
 

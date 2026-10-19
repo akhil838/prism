@@ -48,7 +48,6 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private var recoFor: String? = null
     /** Blurred snapshot of the Top Shelf shown behind the app grid (tvOS frosted background). */
     private lateinit var frost: ImageView
-    private lateinit var gridScrim: View
     private lateinit var strip: ControlStrip
     /** Where Down / Back from the control strip returns (a shelf card or dock tile). */
     private var stripReturn: View? = null
@@ -102,6 +101,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         screenW = maxOf(m.widthPixels, m.heightPixels)
         dims = Dims(maxOf(m.widthPixels, m.heightPixels), screenH)
         setContentView(buildLayout())
+        // Home draws its own backdrop / frost everywhere: a window background is just one more
+        // full-screen fill, and it would stop Android treating the area over the video as transparent.
+        window.setBackgroundDrawable(null)
         registerSystemReceiver(packageReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REMOVED)
@@ -338,11 +340,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             topMargin = (screenH * SHELF_TOP).toInt() - zoomPad
         })
 
-        frost = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
+        frost = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f; visibility = View.GONE }
         root.addView(frost, match)
 
-        gridScrim = View(this).apply { setBackgroundColor(Color.BLACK); alpha = 0f }
-        root.addView(gridScrim, match)
 
         adapter = HomeAdapter(dims, this)
         layoutManager = object : GridLayoutManager(this, dims.columns) {
@@ -362,6 +362,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             clipChildren = false
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
+            // No decorations or edge glow: it draws nothing itself. RecyclerView decides this in its
+            // constructor (before overScrollMode is set), and a "drawing" full-screen list would hide
+            // the transparent area over a video wallpaper from the compositor.
+            setWillNotDraw(true)
             isFocusable = false
             descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
             val side = dims.margin - dims.gap / 2
@@ -584,20 +588,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     // ---- Top Shelf & glass --------------------------------------------------------------
 
-    private val overlayPaint = android.graphics.Paint()
-
     /** The glass refracts the Top Shelf layers and re-applies the shade/scrim that sit above them. */
     override fun setupGlass(glass: GlassView) {
         // Over a video the glass just lets the live picture through (no still-frame refraction).
         if (videoPath != null) { glass.sources = emptyList(); glass.overlay = null; return }
         glass.sources = listOf(backA, backB, frost)
         glass.overlay = { c ->
-            shade.background?.let { it.setBounds(0, 0, shade.width, shade.height); it.draw(c) }
-            if (gridScrim.alpha > 0.01f) {
-                overlayPaint.color = Color.BLACK
-                overlayPaint.alpha = (gridScrim.alpha * 255).toInt()
-                c.drawRect(0f, 0f, shade.width.toFloat(), shade.height.toFloat(), overlayPaint)
-            }
+            if (shade.visibility == View.VISIBLE) shade.background?.let { it.setBounds(shade.left, shade.top, shade.right, shade.bottom); it.draw(c) }
         }
     }
 
@@ -611,16 +608,17 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         wallpaperGlass = wallpaper?.let { Wallpaper.glassOf(it) }
         // Wallpaper: shown sharp and undimmed like tvOS, only a soft fade under the dock.
         // App artwork (blurred logos): darker wash so the dock and tiles stay legible.
+        // Over a wallpaper only the bottom third is darkened, so the shade covers just that band
+        // (the area above stays truly transparent over a video wallpaper).
         shade.background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
-            if (wallpaper != null) intArrayOf(0x00000000, 0x00000000, 0x00000000, 0x4D000000)
+            if (wallpaper != null) intArrayOf(0x00000000, 0x4D000000)
             else intArrayOf(0x73000000, 0x59000000, 0xB3000000.toInt(), 0xF2000000.toInt()),
         )
-        backB.animate().cancel()
+        shade.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            if (wallpaper != null) screenH / 3 else ViewGroup.LayoutParams.MATCH_PARENT, Gravity.BOTTOM)
         if (wallpaper != null) {
-            backA.setImageBitmap(wallpaper)
-            backB.alpha = 0f
-            frontIsA = true
+            showPosterNow()
             adapter.dockGlass?.setArtwork(wallpaperGlass, 0)
         }
         adapter.dockGlass?.let { setupGlass(it); it.invalidate() }
@@ -674,7 +672,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             shelfProgram = list.first()
             showInfo(list.first())
             buildCards(list.take(8), pkg)
-            recoBox.animate().alpha(if (inGrid) 0f else 1f).setDuration(FADE_MS).start()
+            fadeView(recoBox, if (inGrid) 0f else 1f, FADE_MS)
         }
     }
 
@@ -685,8 +683,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         shelfTint = null
         main.removeCallbacks(cardTint)
         videoCovered = false; updateVideoPlayback()
-        videoView.animate().alpha(1f).setDuration(FADE_MS).start()
-        recoBox.animate().alpha(0f).setDuration(FADE_MS / 2).start()
+        fadeView(recoBox, 0f, FADE_MS / 2)
         showFallbackArt(entry)
     }
 
@@ -714,7 +711,6 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
                         outline.setRoundRect(0, 0, view.width, view.height, radius)
                 }
                 clipToOutline = true
-                elevation = 8 * dims.pt
                 isFocusable = true
                 isClickable = true
                 contentDescription = p.title
@@ -872,15 +868,47 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private fun setGridMode(grid: Boolean) {
         if (grid == inGrid) return
         inGrid = grid
-        shelf.animate().alpha(if (!grid && cardsFor != null) 1f else 0f).setDuration(260).start()
+        fadeView(shelf, if (!grid && cardsFor != null) 1f else 0f, 260)
         // tvOS: browsing apps frosts whatever the Top Shelf was showing.
-        if (grid) frost.setImageBitmap(frostSnapshot())
-        frost.animate().alpha(if (grid) 1f else 0f).setDuration(320)
-            .setUpdateListener { adapter.dockGlass?.invalidate() }.start()
+        // The grid's dim is baked into the frost image (one full-screen layer instead of two).
+        if (grid) { val f = frostSnapshot(); frostBitmap = f; frost.setImageBitmap(dimmed(f)) }
+        // The opaque frost covers the backdrop, shade and video entirely: stop drawing (and, for the
+        // video, compositing) them while it's up. They return before the frost fades out.
+        if (!grid) setUnderGrid(View.VISIBLE)
+        val fade = {
+            fadeView(frost, if (grid) 1f else 0f, 320, update = { adapter.dockGlass?.invalidate() },
+                end = { if (inGrid) setUnderGrid(View.INVISIBLE); updateVideoPlayback() })
+        }
+        if (grid && backdropClear && videoPath != null) {
+            // Over the bare video the compositor skips the area above the dock (transparent region).
+            // Making the frost visible updates that region, but via the window manager, a few frames
+            // after our own drawing: start the fade once it has landed, or the frost pops in at the end.
+            frost.alpha = 0f; frost.visibility = View.VISIBLE
+            main.postDelayed({ if (inGrid) fade() }, REGION_SETTLE_MS)
+        } else fade()
         // tvOS: time + profile only show on the Top Shelf, not while browsing apps.
         statusPill.animate().alpha(if (grid) 0f else 1f).setDuration(200).start()
-        gridScrim.animate().alpha(if (grid) GRID_DIM else 0f).setDuration(320)
-            .setUpdateListener { adapter.dockGlass?.invalidate() }.withEndAction { updateVideoPlayback() }.start()
+    }
+
+    private var frostBitmap: android.graphics.Bitmap? = null
+
+    private fun dimmed(src: android.graphics.Bitmap): android.graphics.Bitmap =
+        src.copy(android.graphics.Bitmap.Config.ARGB_8888, true).also {
+            android.graphics.Canvas(it).drawColor(((GRID_DIM * 255).toInt() shl 24))
+        }
+
+    /** Layers under the grid's frost are hidden (see [setGridMode]); the frost is then current. */
+    private var underHidden = false
+
+    private fun setUnderGrid(v: Int) {
+        underHidden = v != View.VISIBLE
+        // Restore only what was showing; fully faded layers stay GONE.
+        fun set(view: View) { view.visibility = if (v == View.VISIBLE && view.alpha <= 0f) View.GONE else v }
+        set(backA); set(backB); shade.visibility = v
+        // Video: never hidden (that destroys the surface and decoder; recreating them on every trip
+        // into the grid exhausted the memory the TV's decoder shares with its GPU, crashing the GPU
+        // renderer). Moving it off-screen keeps the paused player and lets the compositor skip it.
+        videoView.translationX = if (v == View.VISIBLE) 0f else screenW * 2f
     }
 
     /** tvOS: after a few idle minutes on Home, the aerial screen saver starts (Settings → Screen Saver). */
@@ -896,6 +924,8 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     /** The visible Top Shelf (backdrop, video frame, cards) drawn tiny and blurred heavily. */
     private fun frostSnapshot(): android.graphics.Bitmap {
+        // In the grid the layers below are hidden; the frost on screen is the snapshot already.
+        if (underHidden) frostBitmap?.let { return it }
         val w = Frost.W; val h = Frost.H
         val bm = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
         val c = android.graphics.Canvas(bm)
@@ -941,8 +971,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         const val CARD_H = 0.42f
         const val CARD_GAP = 0.032f
         const val CARD_FOCUS_SCALE = 1.08f
-        /** Extra darkening over the frosted background while browsing the grid. */
+        /** Darkening baked into the frosted background while browsing the grid. */
         const val GRID_DIM = 0.15f
+        /** Time for a transparent-region change to reach the compositor (measured on a TCL TV). */
+        const val REGION_SETTLE_MS = 150L
         val SCROLL_EASE = DecelerateInterpolator(2f)
     }
 }

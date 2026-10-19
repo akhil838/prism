@@ -74,7 +74,8 @@ class TileView(context: Context, private val dims: Dims) : FrameLayout(context) 
             }
         }
         clipToOutline = true
-        elevation = 2 * dims.pt
+        // No resting shadow: 30+ tile shadows per frame were too much for TV GPUs; the focused /
+        // moving tile still lifts with translationZ (tvOS shows the halo only on that one).
     }
 
     fun bind(entry: AppEntry) {
