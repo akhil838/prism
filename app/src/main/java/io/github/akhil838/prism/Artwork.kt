@@ -87,9 +87,14 @@ object Artwork {
     private fun darken(c: Int, f: Float) =
         Color.rgb((Color.red(c) * f).toInt(), (Color.green(c) * f).toInt(), (Color.blue(c) * f).toInt())
 
-    /** Top Shelf background for a card: its art reduced to soft colour, blurred and darkened. */
-    fun tint(src: Bitmap): Bitmap {
-        val small = Bitmap.createScaledBitmap(src, 96, 54, true).copy(Bitmap.Config.ARGB_8888, false)
+    /**
+     * Top Shelf background for a card, step 1 (main thread, ~1 ms): a 96x54 copy of its art, so
+     * the blur can run elsewhere without touching the card's bitmap (Home may recycle it any time).
+     */
+    fun tintSource(src: Bitmap): Bitmap = Bitmap.createScaledBitmap(src, 96, 54, true).copy(Bitmap.Config.ARGB_8888, false)
+
+    /** Step 2 (any thread): [tintSource]'s copy reduced to soft colour, blurred and darkened. */
+    fun tint(small: Bitmap): Bitmap {
         val out = blur(small, radius = 10).copy(Bitmap.Config.ARGB_8888, true)
         Canvas(out).drawColor(0x9E000000.toInt())
         return out

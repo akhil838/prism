@@ -145,6 +145,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         super.onStart()
         started = true
         requestPlayer()
+        if (loadingCards.isNotEmpty()) startPulse()
     }
 
     override fun onPause() {
@@ -303,7 +304,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         if (i.getBooleanExtra("dump", false)) Diag.dump(listOf(
             "apps=${apps.size} inGrid=$inGrid video=$videoPath player=${player != null} ready=$playerReady rendering=$videoRendering covered=$videoCovered",
             "wallpaper=${wallpaper?.let { "${it.width}x${it.height} ${it.config} ${it.byteCount shr 10}KB" }}",
-            "shelf=$cardsFor cards=${recoRow.childCount} cardArt=${cardArt.values.sumOf { it.byteCount } shr 10}KB tints=${tints.size}",
+            "shelf=$cardsFor cards=${recoRow.childCount} cardArt=${cardArt.values.sumOf { it.byteCount } shr 10}KB tints=${tints.size()}",
             "artCache=${artCache.size()} frost=${frostBitmap?.byteCount?.shr(10)}KB",
             "nativeHeap=${android.os.Debug.getNativeHeapAllocatedSize() shr 20}MB javaHeap=${(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) shr 20}MB",
         ))
@@ -890,11 +891,27 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         Channels.programs(this, pkg) { list ->
             if (recoFor != pkg) return@programs
             if (list.isEmpty()) { hideReco(entry); return@programs }
-            shelfProgram = list.first()
-            showInfo(list.first())
-            buildCards(list.take(8), pkg)
-            fadeView(recoBox, if (inGrid) 0f else 1f, FADE_MS)
+            // Background first, then the cards: the old shelf fades out, the new one is built hidden,
+            // and it fades in once the first card's tint has started to replace the background
+            // ([revealShelf]). Before, the new cards popped in over the old app's background.
+            val build = {
+                if (recoFor == pkg) {
+                    shelfProgram = list.first()
+                    showInfo(list.first())
+                    buildCards(list.take(8), pkg)
+                    // Been here before: its background is cached, so it changes now, ahead of any card art.
+                    tints.get(list.first())?.let(::showTint)
+                    main.postDelayed(revealShelf, REVEAL_TIMEOUT_MS) // first image slow or missing
+                }
+            }
+            if (recoBox.visibility == View.VISIBLE && recoBox.alpha > 0f) fadeView(recoBox, 0f, FADE_MS / 2, end = build)
+            else build()
         }
+    }
+
+    /** The new shelf's cards fade in (once its background is on the way, or after [REVEAL_TIMEOUT_MS]). */
+    private val revealShelf = Runnable {
+        if (cardsFor != null && cardsFor == recoFor && !inGrid && recoBox.visibility != View.VISIBLE) fadeView(recoBox, 1f, FADE_MS)
     }
 
     /** No recommendations for [entry]: hide the shelf and bring back wallpaper / banner art. */
@@ -903,20 +920,84 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         shelfProgram = null
         shelfTint = null
         main.removeCallbacks(cardTint)
+        main.removeCallbacks(revealShelf)
         videoCovered = false; updateVideoPlayback()
-        fadeView(recoBox, 0f, FADE_MS / 2)
+        // Once faded out, free its cards: navigating along apps without a shelf no longer keeps the
+        // last shelf's images (and their GPU textures) alive.
+        fadeView(recoBox, 0f, FADE_MS / 2, end = { if (cardsFor == null) releaseCards() })
         showFallbackArt(entry)
     }
 
     private val cardH get() = (screenH * CARD_H).toInt()
 
-    private fun buildCards(items: List<Program>, pkg: String) {
+    /** Bumped whenever the shelf's cards are released: image loads for older cards are dropped. */
+    private var shelfGen = 0
+
+    /**
+     * Frees the shelf's card bitmaps now (pixels and GPU texture) instead of at some later GC. On the
+     * TCL (Mali-470; one GPU memory pool shared by every process), cards of shelves the user had
+     * already moved past piled up while navigating fast, until a texture upload failed and HWUI
+     * aborted ("GL error: Out of memory"). Each card owns its bitmap ([Channels.image]), and HWUI
+     * keeps its own reference for frames already recorded, so recycling here is safe.
+     */
+    private fun releaseCards() {
+        shelfGen++
+        for (i in 0 until recoRow.childCount) {
+            val card = recoRow.getChildAt(i) as? ImageView ?: continue
+            val bm = (card.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            card.setImageDrawable(null)
+            bm?.recycle()
+        }
         recoRow.removeAllViews()
+        cardArt.clear()
+        cardLoads.clear()
+        loadingCards.clear()
+        stopPulse()
+    }
+
+    /** Cards whose image is on its way: they pulse softly ([pulse]) until it arrives. */
+    private val loadingCards = HashSet<ImageView>()
+
+    /**
+     * The loading pulse, stepped at ~5 frames a second rather than animated at 60: on the TCL every
+     * frame Home changes costs two full-screen GPU passes (Home's own, and SurfaceFlinger's, which
+     * composites every app window on the GPU there), so a 60 fps pulse slowed the whole TV while
+     * card art loaded. Only recolours the placeholders: no layers, no bitmaps.
+     */
+    private val pulse = object : Runnable {
+        private var step = 0
+        override fun run() {
+            if (loadingCards.isEmpty()) return
+            step = (step + 1) % PULSE_ALPHAS.size
+            val c = (PULSE_ALPHAS[step] shl 24) or 0x00FFFFFF
+            for (card in loadingCards) card.setBackgroundColor(c)
+            main.postDelayed(this, PULSE_STEP_MS)
+        }
+    }
+
+    private fun startPulse() { main.removeCallbacks(pulse); main.postDelayed(pulse, PULSE_STEP_MS) }
+    private fun stopPulse() = main.removeCallbacks(pulse)
+
+    private fun cardLoading(card: ImageView) {
+        val first = loadingCards.isEmpty()
+        loadingCards += card
+        if (first && started) startPulse()
+    }
+
+    private fun cardLoaded(card: ImageView) {
+        if (!loadingCards.remove(card)) return
+        card.setBackgroundColor(CARD_PLACEHOLDER)
+        if (loadingCards.isEmpty()) stopPulse()
+    }
+
+    private fun buildCards(items: List<Program>, pkg: String) {
+        releaseCards()
+        val gen = shelfGen
         recoRow.animate().cancel()
         recoRow.translationX = 0f
         cardsFor = pkg
         cardIndex = 0
-        cardArt.clear(); tints.clear(); shelfTint = null
+        shelfTint = null
         var eager = 0 // cards on screen at rest, plus one: loaded right away
         // Only this app's card images are wanted now: queued loads for the previous app are dropped.
         Channels.focus(pkg)
@@ -929,7 +1010,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             val w = (h * p.aspect).toInt().coerceIn((h * 0.6f).toInt(), minOf((h * 3.2f).toInt(), maxW))
             val card = ImageView(this).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(0x26FFFFFF)
+                setBackgroundColor(CARD_PLACEHOLDER)
                 outlineProvider = object : android.view.ViewOutlineProvider() {
                     override fun getOutline(view: View, outline: android.graphics.Outline) =
                         outline.setRoundRect(0, 0, view.width, view.height, radius)
@@ -961,12 +1042,19 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             // off-screen cards keep their colour placeholder and cost no memory until reached.
             val left = dims.margin + total + if (i > 0) gap else 0
             total += w + if (i > 0) gap else 0
-            p.image?.let { uri ->
-                Channels.image(this, uri, w) { bm ->
-                    if (recoFor != pkg || bm == null) return@image
-                    card.setImageBitmap(bm)
-                    cardArt[p] = bm
-                    if (shelfProgram === p) applyTint(p)
+            cardLoads += p.image?.let { uri ->
+                {
+                    cardLoading(card)
+                    Channels.image(this, uri, w, tag = pkg) { bm ->
+                        // Arrived for a shelf that is gone (released or rebuilt): never shown, free it.
+                        if (gen != shelfGen || recoFor != pkg) { bm?.recycle(); return@image }
+                        cardLoaded(card)
+                        if (bm == null) return@image
+                        Diag.bitmap("card ${p.title}", bm)
+                        card.setImageBitmap(bm)
+                        cardArt[p] = bm
+                        if (shelfProgram === p) applyTint(p)
+                    }
                 }
             }
             if (left < screenW) eager = i + 1
@@ -1033,19 +1121,43 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     /** Package whose cards are in [recoRow]. */
     private var cardsFor: String? = null
     private val cardArt = HashMap<Program, android.graphics.Bitmap>()
-    private val tints = HashMap<Program, android.graphics.Bitmap>()
+    /**
+     * Shelf backgrounds (96x54, ~20 KB each) kept across shelves: coming back to an app shows its
+     * background at once, with no blur to redo. Never recycled: one may be on screen.
+     */
+    private val tints = android.util.LruCache<Program, android.graphics.Bitmap>(24)
     private var shelfTint: android.graphics.Bitmap? = null
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val cardTint = Runnable { shelfProgram?.let(::applyTint) }
 
-    /** Background = the card's art, blurred and darkened (tiny bitmap, upscaled smoothly). */
+    /**
+     * Background = the card's art, blurred and darkened (tiny bitmap, upscaled smoothly). The blur runs
+     * on [UiWork] (latest request wins), so resting on card after card never queues blur after blur;
+     * only a 96x54 copy is taken here, the card's own bitmap never leaves the main thread.
+     */
     private fun applyTint(p: Program) {
+        tints.get(p)?.let { showTint(it); return }
         val art = cardArt[p] ?: return
-        val tint = tints.getOrPut(p) { Artwork.tint(art) }
+        val small = Artwork.tintSource(art)
+        val gen = shelfGen
+        UiWork.submit("tint") {
+            val tint = Artwork.tint(small)
+            main.post {
+                if (isDestroyed || gen != shelfGen) return@post
+                tints.put(p, tint)
+                Diag.bitmap("tint", tint)
+                if (shelfProgram === p) showTint(tint)
+            }
+        }
+    }
+
+    private fun showTint(tint: android.graphics.Bitmap) {
         if (shelfTint === tint) return
         shelfTint = tint
         shownArtFor = null
         crossfadeBackdrop(tint)
+        // The background leads; the new shelf's cards follow halfway through its crossfade.
+        main.removeCallbacks(revealShelf); main.postDelayed(revealShelf, FADE_MS / 2)
         // The tint covers the video wallpaper: pause it once the fade has finished.
         videoCovered = true
         updateVideoPlayback()

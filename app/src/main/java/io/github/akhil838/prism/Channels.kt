@@ -11,7 +11,6 @@ import android.util.Log
 import android.util.LruCache
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.Executors
 
 /** One recommended item an app publishes in its Android TV preview channels. */
 class Program(
@@ -31,13 +30,26 @@ class Program(
  */
 object Channels {
     private const val TAG = "PrismChannels"
-    private val io = Executors.newFixedThreadPool(3)
+    /**
+     * Card image downloads + decodes, one at a time: a decode can briefly take tens of MB of native
+     * memory, and two at once on a TV whose memory is already almost all in use was a crash trigger.
+     */
+    private val imageIo = backgroundPool("PrismCards")
     private val main = Handler(Looper.getMainLooper())
     private val programCache = HashMap<String, Pair<Long, List<Program>>>()
-    private val images = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    /**
+     * Card art kept as small JPEGs already scaled to the card (~60-120 KB each), not as bitmaps: a
+     * decoded card is ~0.8 MB of RAM plus the same again as GPU texture, and on the TCL (Mali-470,
+     * one GPU memory pool shared by every process) cards kept for shelves the user had already moved
+     * past were what ran it out ("GL error: Out of memory" -> HWUI abort). Re-decoding one is cheap
+     * and needs no network.
+     */
+    private val images = object : LruCache<String, ByteArray>(3 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: ByteArray) = value.size
     }
     private const val TTL_MS = 10 * 60_000L
+    /** Sources above this are skipped (the card keeps its placeholder): see [decode]. */
+    private const val MAX_SOURCE_PIXELS = 3840L * 2160
     /** Callbacks waiting on an image that is already being fetched (main thread only). */
     private val pending = HashMap<String, MutableList<(Bitmap?) -> Unit>>()
 
@@ -124,21 +136,25 @@ object Channels {
         else -> 16f / 9
     }
 
-    /** Loads [uri] (http/https/content/android.resource) scaled to roughly [maxW] wide. */
-    fun image(ctx: Context, uri: Uri, maxW: Int, done: (Bitmap?) -> Unit) =
-        cached(ctx, "$uri@$maxW", done) { app -> decode(app, uri, maxW) }
-
-    /** Cache lookup, then one background load per key; every waiting caller gets the result. */
-    private fun cached(ctx: Context, key: String, done: (Bitmap?) -> Unit, load: (Context) -> Bitmap?) {
-        images.get(key)?.let { done(it); return }
+    /**
+     * Loads [uri] scaled to [maxW] wide, for shelf [tag]. Every caller gets its own bitmap and owns
+     * it: recycle it once it is off screen (Home does, per shelf), which frees its GPU texture at
+     * once instead of at some later GC.
+     */
+    fun image(ctx: Context, uri: Uri, maxW: Int, tag: String, done: (Bitmap?) -> Unit) {
+        val key = "$uri@$maxW"
         pending[key]?.let { it += done; return }
         pending[key] = mutableListOf(done)
         val app = ctx.applicationContext
-        io.execute {
-            val bm = runCatching { load(app) }.onFailure { Log.w(TAG, "image $key: $it") }.getOrNull()
+        imageIo.execute {
+            val bm = if (tag != wanted) null else runCatching {
+                images.get(key)?.let(::decodeCard) ?: decode(app, uri, maxW)?.also { images.put(key, encode(it)) }
+            }.onFailure { Log.w(TAG, "image $key: $it") }.getOrNull()
             main.post {
-                if (bm != null) images.put(key, bm)
-                pending.remove(key)?.forEach { it(bm) }
+                val waiting = pending.remove(key).orEmpty()
+                if (waiting.isEmpty()) { bm?.recycle(); return@post }
+                // One bitmap per caller, so each can recycle its own.
+                waiting.forEachIndexed { i, cb -> cb(if (bm == null || i == 0) bm else bm.copy(Bitmap.Config.RGB_565, false)) }
             }
         }
     }
@@ -147,6 +163,16 @@ object Channels {
     @Volatile private var wanted: String? = null
 
     fun focus(tag: String) { wanted = tag }
+
+    /** Memory is short: drop the cached card art (re-read from the network or provider on demand). */
+    fun trim() = images.evictAll()
+
+    private fun encode(bm: Bitmap): ByteArray =
+        java.io.ByteArrayOutputStream(64 * 1024).also { bm.compress(Bitmap.CompressFormat.JPEG, 88, it) }.toByteArray()
+
+    private fun decodeCard(bytes: ByteArray): Bitmap? =
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 })
+
     private fun decode(app: Context, uri: Uri, maxW: Int): Bitmap? {
         val bytes = when (uri.scheme) {
             "http", "https" -> (URL(uri.toString()).openConnection() as HttpURLConnection).run {
@@ -157,6 +183,14 @@ object Channels {
         }
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null
+        // Some apps publish multi-megapixel originals. Decoding one takes tens of MB of native memory
+        // for a moment whatever the sample size (a progressive JPEG is buffered whole): logged at
+        // +40 MB on the TCL, seconds before its GPU ran out of memory.
+        if (o.outWidth.toLong() * o.outHeight > MAX_SOURCE_PIXELS) {
+            Log.w(TAG, "image $uri skipped: ${o.outWidth}x${o.outHeight} source")
+            return null
+        }
         var s = 1
         while (o.outWidth / (s * 2) >= maxW) s *= 2
         val bm = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
