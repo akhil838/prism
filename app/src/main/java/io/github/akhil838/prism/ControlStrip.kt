@@ -63,6 +63,10 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
     private val panel = LinearLayout(context)
     private val panelRows = ArrayList<View>()
 
+    // Fading this view must not render it into a temporary off-screen image first: those are
+    // full-size GPU allocations, and on TVs whose GPU memory is nearly full they make the renderer abort.
+    override fun hasOverlappingRendering() = false
+
     var expanded = false
         private set
     private val onNotifs: () -> Unit = { updateCount(); if (panel.visibility == VISIBLE) fillPanel() }

@@ -302,7 +302,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         // Per-app Top Shelf (tvOS carousel): the focused dock app's recommendations as large artwork
         // cards. Height is fixed; width follows each item's art (16:9 sits two-up, wide art gets one
         // wide card), so nothing is cropped. The row slides to keep the focused card in view.
-        recoBox = FrameLayout(this).apply { alpha = 0f; clipChildren = false; clipToPadding = false }
+        // No off-screen layer while it fades (a large GPU allocation per transition; see ControlStrip).
+        recoBox = object : FrameLayout(this) { override fun hasOverlappingRendering() = false }
+            .apply { alpha = 0f; visibility = View.GONE; clipChildren = false; clipToPadding = false }
         recoRow = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
             clipChildren = false; clipToPadding = false

@@ -53,7 +53,7 @@ class TileView(context: Context, private val dims: Dims) : FrameLayout(context) 
 
     private val image = ImageView(context)
     /** "Illumination": top of the focused tile reads lighter, fading out by mid-height. */
-    private val lit = View(context).apply {
+    private val lit = object : View(context) { override fun hasOverlappingRendering() = false }.apply {
         background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(0x40FFFFFF, 0x14FFFFFF, 0x00FFFFFF),
