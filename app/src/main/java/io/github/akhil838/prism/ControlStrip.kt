@@ -43,7 +43,8 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
     private val gap = (16 * pt).toInt()
 
     // ---- collapsed pill ----
-    private val pill = LinearLayout(context)
+    // Pill, circles and panel fade without an off-screen layer (see hasOverlappingRendering below).
+    private val pill = object : LinearLayout(context) { override fun hasOverlappingRendering() = false }
     private val clock = label(28f)
     private val pillBell = ImageView(context).apply { setImageResource(R.drawable.ic_bell); visibility = GONE }
     private val pillCount = label(24f).apply { visibility = GONE }
@@ -60,7 +61,7 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
     private var avatar: Bitmap? = null
 
     // ---- notifications panel ----
-    private val panel = LinearLayout(context)
+    private val panel = object : LinearLayout(context) { override fun hasOverlappingRendering() = false }
     private val panelRows = ArrayList<View>()
 
     // Fading this view must not render it into a temporary off-screen image first: those are
@@ -135,11 +136,12 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
 
     private fun addCircle(icon: Int, withBadge: Boolean = false, onClick: () -> Unit): ImageView {
         val i = circles.size
-        val disc = FrameLayout(context).apply { background = glass(oval = true); outlineProvider = OVAL; clipToOutline = true; elevation = 4 * pt }
+        // No elevation: shadows are what crashed the TCL's renderer (see TileView); the stroke outlines the disc.
+        val disc = FrameLayout(context).apply { background = glass(oval = true); outlineProvider = OVAL; clipToOutline = true }
         val img = ImageView(context).apply { setImageResource(icon); scaleType = ImageView.ScaleType.CENTER_INSIDE }
         val pad = (18 * pt).toInt()
         disc.addView(img, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply { setMargins(pad, pad, pad, pad) })
-        val outer = FrameLayout(context).apply {
+        val outer = object : FrameLayout(context) { override fun hasOverlappingRendering() = false }.apply {
             clipChildren = false
             isFocusable = false; isClickable = true // focusable only while expanded
             alpha = 0f
@@ -151,7 +153,6 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
                     setTextSize(TypedValue.COMPLEX_UNIT_PX, 18 * pt)
                     typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
                     background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFFFF453A.toInt()) }
-                    elevation = 40 * pt // above the focused (lifted) disc
                     setPadding((4 * pt).toInt(), 0, (4 * pt).toInt(), 0)
                     minWidth = bs
                 }
@@ -199,7 +200,6 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
             setColor(0xF01C1C1F.toInt())
             setStroke((1.5f * pt).toInt().coerceAtLeast(1), 0x40FFFFFF)
         }
-        panel.elevation = 24 * pt
         panel.clipChildren = false; panel.clipToPadding = false
         addView(panel, LayoutParams((660 * pt).toInt(), LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
             topMargin = dims.safeTop + (28 * pt).toInt() + c / 2 + (26 * pt).toInt()

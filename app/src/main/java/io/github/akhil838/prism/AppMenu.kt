@@ -33,8 +33,11 @@ class AppMenu(context: Context, private val dims: Dims) : FrameLayout(context) {
     )
 
     private val pt = dims.pt
-    private val scrim = View(context).apply { setBackgroundColor(0x59000000) }
-    private val panel = LinearLayout(context)
+    /** A single fill: fading it needs no off-screen layer (full-screen GPU allocation per open). */
+    private val scrim = object : View(context) { override fun hasOverlappingRendering() = false }
+        .apply { setBackgroundColor(0x59000000) }
+    /** Fades in without an off-screen layer, and casts no shadow (both cost GPU memory the TCL lacks). */
+    private val panel = object : LinearLayout(context) { override fun hasOverlappingRendering() = false }
     private val rows = ArrayList<View>()
     private val stack = ArrayDeque<List<Item>>()
     private var returnFocus: View? = null
@@ -54,7 +57,6 @@ class AppMenu(context: Context, private val dims: Dims) : FrameLayout(context) {
             setColor(0xF01C1C1F.toInt())
             setStroke((1.5f * pt).toInt().coerceAtLeast(1), 0x40FFFFFF)
         }
-        panel.elevation = 24 * pt
         panel.clipChildren = false; panel.clipToPadding = false
         addView(panel, LayoutParams((420 * pt).toInt(), LayoutParams.WRAP_CONTENT))
     }

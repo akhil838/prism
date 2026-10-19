@@ -167,13 +167,13 @@ class IntroActivity : Activity() {
         }, FrameLayout.LayoutParams((960 * pt).toInt(), (960 * pt).toInt()).apply {
             leftMargin = (40 * pt).toInt(); topMargin = (60 * pt).toInt()
         })
+        // No elevation shadow: shadows are what ran the TCL's GPU out of memory (see TileView).
         val icon = ImageView(this).apply {
             setImageResource(R.drawable.ic_launcher)
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) = outline.setRoundRect(0, 0, view.width, view.height, 80 * pt)
             }
             clipToOutline = true
-            elevation = 24 * pt
         }
         root.addView(icon, FrameLayout.LayoutParams((420 * pt).toInt(), (420 * pt).toInt()).apply {
             leftMargin = (310 * pt).toInt(); topMargin = (330 * pt).toInt()

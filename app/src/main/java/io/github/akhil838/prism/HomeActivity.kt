@@ -1234,21 +1234,36 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         adapter.dockGlass?.setArtwork(art.glass, art.color)
     }
 
+    /**
+     * Dock <-> grid. The layers are staggered, never all drawn in one frame: on the TCL (Mali-470),
+     * the frame where grid tiles, dock glass, the full-screen frost fading out, both backdrop layers,
+     * the shade and the shelf fading in all overlapped was more than its GPU can take in one frame:
+     * it reported "GL error: Out of memory" and HWUI aborted Home. Reproduced on the TV by going
+     * grid -> dock on a shelf app 3 times; with these layers drawn together, any 2 of shelf / glass /
+     * glow crashed it, while GPU memory stayed flat at ~16 MB.
+     * Down: the shelf goes at once (the frost, a blurred snapshot of it, fades in over where it was),
+     * so the first grid frames are not shelf + backdrop + frost + scrolling grid together; both crashes
+     * after the staggering came ~140 ms into entering the grid. Up: the frost clears first, then the
+     * shelf fades in over the settled dock. Frost fades are short: fewer of the heaviest frames.
+     */
     private fun setGridMode(grid: Boolean) {
         if (grid == inGrid) return
         inGrid = grid
-        fadeView(shelf, if (!grid && cardsFor != null) 1f else 0f, 260)
         // tvOS: browsing apps frosts whatever the Top Shelf was showing.
         // The grid's dim is baked into the frost image (one full-screen layer instead of two).
-        if (grid) { val f = frostSnapshot(); frostBitmap = f; frost.setImageBitmap(dimmed(f)) }
+        if (grid) {
+            val f = frostSnapshot(); frostBitmap = f; frost.setImageBitmap(dimmed(f)); Diag.event("grid frost")
+            shelf.animate().cancel(); shelf.alpha = 0f; shelf.visibility = View.GONE
+        }
         // The opaque frost covers the backdrop, shade and video entirely: stop drawing (and, for the
         // video, compositing) them while it's up. They return before the frost fades out.
         if (!grid) setUnderGrid(View.VISIBLE)
-        val fade = {
-            fadeView(frost, if (grid) 1f else 0f, 320, update = { adapter.dockGlass?.invalidate() },
-                end = { if (inGrid) setUnderGrid(View.INVISIBLE); updateVideoPlayback() })
-        }
-        fade()
+        fadeView(frost, if (grid) 1f else 0f, FROST_FADE_MS, update = { adapter.dockGlass?.invalidate() },
+            end = {
+                if (inGrid) setUnderGrid(View.INVISIBLE)
+                else if (cardsFor != null && cardsFor == recoFor) fadeView(shelf, 1f, 260)
+                updateVideoPlayback()
+            })
         // tvOS: time + profile only show on the Top Shelf, not while browsing apps.
         statusPill.animate().alpha(if (grid) 0f else 1f).setDuration(200).start()
     }

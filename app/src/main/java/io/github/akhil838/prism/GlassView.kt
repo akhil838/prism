@@ -207,7 +207,12 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
             val live = sources.mapNotNullTo(HashSet()) { (it.drawable as? BitmapDrawable)?.bitmap }
             layerPaints.keys.retainAll(live)
         }
-        for (iv in sources) {
+        // Start at the topmost fully opaque layer: everything below it is hidden in the real scene, so
+        // refracting it was a whole extra mesh pass (thousands of triangles) per frame for nothing. On the
+        // TCL's GPU that geometry counted toward the per-frame limit that crashed grid <-> dock transitions.
+        val first = sources.indexOfLast { it.visibility == VISIBLE && it.alpha >= 0.999f && it.drawable is BitmapDrawable }.coerceAtLeast(0)
+        for (k in first until sources.size) {
+            val iv = sources[k]
             if (iv.visibility != VISIBLE || iv.alpha <= 0.01f) continue
             val d = iv.drawable as? BitmapDrawable ?: continue
             val bm = d.bitmap ?: continue
