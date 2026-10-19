@@ -89,8 +89,16 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private val artCache = LruCache<String, Art>(12)
 
     private val packageReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) = reload(keepFocus = true)
+        override fun onReceive(context: Context, intent: Intent) {
+            // Only this app's Top Shelf art can be stale (new banner after an update).
+            intent.data?.schemeSpecificPart?.let { artCache.remove(it) }
+            // One update sends REMOVED + ADDED + CHANGED, and the Play Store updates apps in bursts:
+            // reload once things are quiet, not per broadcast (each one rescans every app's banner).
+            main.removeCallbacks(packagesChanged)
+            main.postDelayed(packagesChanged, PACKAGE_SETTLE_MS)
+        }
     }
+    private val packagesChanged = Runnable { reload(keepFocus = true) }
     private val tickReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) = updateClock()
     }
@@ -377,6 +385,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private fun dispatchHomeKey(event: KeyEvent): Boolean {
         resetIdle()
         if (handleMoveKey(event)) return true
+        if (dropRepeat(event)) return true
         if (appMenu.isOpen && event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP) appMenu.back()
             return true
@@ -386,10 +395,32 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             return true
         }
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP && inGrid) focusDock(0)
+            // Back from the grid: up to the dock app the user came down from. Its Top Shelf is still
+            // built, so nothing reloads (focusDock(0) brought in the first app's shelf: new cards, tint
+            // and backdrop, i.e. everything re-rendered and re-uploaded on every Back).
+            if (event.action == KeyEvent.ACTION_UP && inGrid) focusDock(lastDockIndex.coerceIn(0, maxOf(adapter.dockSize - 1, 0)))
             return true // a launcher never finishes on Back
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private var lastRepeatMove = 0L
+
+    /**
+     * A held D-pad repeats every ~50 ms (Bluetooth remotes), faster than one focus move finishes on
+     * this GPU: each move starts a tile rise and settle, halo, label fade and often a scroll, and at
+     * 20 moves a second dozens of them overlap. Repeats closer than [REPEAT_MOVE_MS] are dropped
+     * (IR remotes repeat every ~108 ms and are unaffected); a single press is never touched.
+     */
+    private fun dropRepeat(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount == 0) return false
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> Unit
+            else -> return false
+        }
+        if (event.eventTime - lastRepeatMove < REPEAT_MOVE_MS) return true
+        lastRepeatMove = event.eventTime
+        return false
     }
 
     // ---- layout -------------------------------------------------------------------------
@@ -502,12 +533,18 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         }.apply {
             spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
                 override fun getSpanSize(position: Int) = if (position == 0) dims.columns else 1
-            }
+            }.apply { isSpanIndexCacheEnabled = true; isSpanGroupIndexCacheEnabled = true }
         }
         recycler = RecyclerView(this).apply {
             layoutManager = this@HomeActivity.layoutManager
             adapter = this@HomeActivity.adapter
             itemAnimator = null
+            // The RecyclerView's size never depends on its items.
+            setHasFixedSize(true)
+            // A grid scroll swaps a whole row (6 cells) at once; the default pool keeps 5 cells, so
+            // every row scrolled in built a new cell (views, halo, label) on the main thread.
+            recycledViewPool.setMaxRecycledViews(HomeAdapter.TYPE_APP, dims.columns * 3)
+            setItemViewCacheSize(dims.columns * 2)
             clipChildren = false
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -519,8 +556,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             val side = dims.margin - dims.gap / 2
             setPadding(side, dims.dockTop, side, screenH / 2)
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                    if (state == RecyclerView.SCROLL_STATE_DRAGGING) fingerScroll = true
+                    else if (state == RecyclerView.SCROLL_STATE_IDLE && fingerScroll) { fingerScroll = false; settleAfterSwipe() }
+                }
                 override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                     this@HomeActivity.adapter.dockGlass?.invalidate()
+                    if (fingerScroll) followSwipe()
                 }
             })
         }
@@ -543,6 +585,28 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     }
 
     private fun backdropView() = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+
+    /** A finger is scrolling the list (drag and its fling); remote-driven scrolls never set this. */
+    private var fingerScroll = false
+
+    /**
+     * Touch: the dock / grid look follows a swipe the way Down / Up on the remote set it. The remote
+     * path switches modes in focusGrid / focusDock; a swipe only scrolled the list, so the grid came
+     * up without its frost (and the shelf stayed) and swiping back never restored the Top Shelf.
+     */
+    private fun followSwipe() {
+        val dock = layoutManager.findViewByPosition(0)
+        val up = dock == null || dock.top < dims.dockTop - dims.cellH / 3
+        if (up != inGrid) setGridMode(up)
+    }
+
+    /** Swipe released halfway: finish it, to the dock at rest or to the grid's first row. */
+    private fun settleAfterSwipe() {
+        val dock = layoutManager.findViewByPosition(0) ?: return
+        val dy = if (!inGrid) dock.top - dims.dockTop
+                 else (layoutManager.findViewByPosition(1)?.top ?: return) - dims.gridFocusTop
+        if (dy != 0 && (!inGrid || dy > 0)) recycler.smoothScrollBy(0, dy, SCROLL_EASE, 300)
+    }
 
     // ---- data ---------------------------------------------------------------------------
 
@@ -724,8 +788,19 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     }
 
     override fun onFocused(entry: AppEntry, inDock: Boolean) {
-        if (inDock) showArtwork(entry)
+        if (!inDock) return
+        val tag = HomeAdapter.tagFor(entry.packageName, inDock = true)
+        lastDockIndex = (0 until adapter.dockSize).firstOrNull { adapter.dockTile(it)?.tag == tag } ?: lastDockIndex
+        // Only once focus rests: scrolling along the dock no longer loads (and uploads to the GPU)
+        // every passed app's cards and backdrop. Several shelves within a second were enough to run
+        // the TCL's GPU memory out right after another app had been playing video.
+        artPending = entry
+        main.removeCallbacks(showPendingArt)
+        main.postDelayed(showPendingArt, SHELF_SETTLE_MS)
     }
+
+    /** Dock app focused last; Back from the grid returns there. */
+    private var lastDockIndex = 0
 
     /** Dock app whose Top Shelf is waiting for focus to rest ([SHELF_SETTLE_MS]). */
     private var artPending: AppEntry? = null
@@ -744,10 +819,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             add(AppMenu.Item(getString(R.string.edit_home_screen), R.drawable.ic_tv) { startMove(pkg, inDock) })
             add(AppMenu.Item(getString(R.string.move_to), submenu = { moveTargets(pkg, inDock) }))
             add(AppMenu.Item(getString(R.string.app_info), R.drawable.ic_info) {
-                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", pkg, null)))
+                runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", pkg, null))) }
             })
             if (canDelete) add(AppMenu.Item(getString(R.string.delete_app), R.drawable.ic_delete, danger = true) {
-                startActivity(Intent(Intent.ACTION_DELETE, android.net.Uri.fromParts("package", pkg, null)))
+                runCatching { startActivity(Intent(Intent.ACTION_DELETE, android.net.Uri.fromParts("package", pkg, null))) }
             })
         })
     }
@@ -790,6 +865,8 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0) return true // swallow release/repeats
         val dock = store.dock(apps.map { it.packageName }.toSet())
         val grid = gridPkgs.toMutableList()
+        // The app went away mid-move (uninstalled, disabled): nothing left to move.
+        if (pkg !in dock && pkg !in grid) { TileView.movingPkg = null; return true }
         val c = dims.columns
         when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
@@ -802,6 +879,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             KeyEvent.KEYCODE_DPAD_UP -> {
                 if (movingInDock) return true
                 val i = grid.indexOf(pkg)
+                if (i < 0) return true
                 if (i >= c) {
                     grid.removeAt(i); grid.add(i - c, pkg)
                 } else if (dock.size < DockStore.MAX_DOCK) {
@@ -815,10 +893,11 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             KeyEvent.KEYCODE_DPAD_DOWN -> {
                 if (movingInDock) {
                     val i = dock.indexOf(pkg)
+                    if (i < 0) return true
                     dock.removeAt(i); grid.add(minOf(i, grid.size), pkg); movingInDock = false
                 } else {
                     val i = grid.indexOf(pkg)
-                    if (i + c > grid.lastIndex) return true
+                    if (i < 0 || i + c > grid.lastIndex) return true
                     grid.removeAt(i); grid.add(i + c, pkg)
                 }
             }
