@@ -2,8 +2,6 @@ package io.github.akhil838.prism
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Matrix
-import android.graphics.SurfaceTexture
 import android.graphics.Typeface
 import android.media.MediaPlayer
 import android.os.Handler
@@ -12,7 +10,8 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.Surface
-import android.view.TextureView
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.View
 import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
@@ -35,7 +34,8 @@ class AerialView(context: Context) : FrameLayout(context) {
 
     private val store = DockStore(context)
     private val pt = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels) / 1080f
-    private val texture = TextureView(context)
+    /** Hardware-composited video layer; the photo and black fade views draw above it. */
+    private val video = SurfaceView(context)
     private val photo = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; visibility = GONE }
     private val black = View(context).apply { setBackgroundColor(Color.BLACK) }
     private val caption = TextView(context).apply {
@@ -72,19 +72,18 @@ class AerialView(context: Context) : FrameLayout(context) {
     init {
         setBackgroundColor(Color.BLACK)
         val match = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        addView(texture, match)
+        addView(video, LayoutParams(match))
         addView(photo, LayoutParams(match))
         addView(black, LayoutParams(match))
         addView(caption, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
             leftMargin = (90 * pt).toInt(); bottomMargin = (70 * pt).toInt(); rightMargin = (90 * pt).toInt()
         })
         addView(status, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) { surface = Surface(st); if (running && current == null) next() }
-            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = fit()
-            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean { release(); surface?.release(); surface = null; return true }
-            override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
-        }
+        video.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(h: SurfaceHolder) { surface = h.surface; if (running && current == null) next() }
+            override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hh: Int) = Unit
+            override fun surfaceDestroyed(h: SurfaceHolder) { release(); surface = null } // owned by the SurfaceView
+        })
     }
 
     fun start() {
@@ -149,7 +148,6 @@ class AerialView(context: Context) : FrameLayout(context) {
         release(); current = null
         val m = resources.displayMetrics
         val bm = Wallpaper.decode(item.file.path, m.widthPixels, m.heightPixels) ?: return main.post { next() }.let {}
-        texture.visibility = GONE
         photo.visibility = VISIBLE
         photo.setImageBitmap(bm)
         val ms = store.slideSeconds() * 1000L
@@ -172,7 +170,6 @@ class AerialView(context: Context) : FrameLayout(context) {
         release()
         photo.visibility = GONE
         photo.setImageDrawable(null)
-        texture.visibility = VISIBLE
         player = MediaPlayer().apply {
             setSurface(surface)
             setVolume(0f, 0f)
@@ -257,14 +254,14 @@ class AerialView(context: Context) : FrameLayout(context) {
     }
     private val hideCaption = Runnable { caption.animate().alpha(0f).setDuration(FADE_MS).start() }
 
-    /** Centre-crop the video into the view (TextureView stretches by default). */
+    /** Centre-crop: the video surface is sized to cover the screen and centred (edges overflow). */
     private fun fit() {
         val mp = player ?: return
         val vw = runCatching { mp.videoWidth }.getOrDefault(0).toFloat(); val vh = runCatching { mp.videoHeight }.getOrDefault(0).toFloat()
-        val w = texture.width.toFloat(); val h = texture.height.toFloat()
+        val w = width.toFloat(); val h = height.toFloat()
         if (vw <= 0 || vh <= 0 || w <= 0 || h <= 0) return
         val s = maxOf(w / vw, h / vh)
-        texture.setTransform(Matrix().apply { setScale(vw * s / w, vh * s / h, w / 2, h / 2) })
+        video.layoutParams = LayoutParams((vw * s).toInt(), (vh * s).toInt(), Gravity.CENTER)
     }
 
     override fun onDetachedFromWindow() {

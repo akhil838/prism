@@ -64,9 +64,17 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private var seenRev = -1
     private var wallpaper: android.graphics.Bitmap? = null
     private lateinit var shade: View
-    private lateinit var videoView: android.view.TextureView
+    /**
+     * Video wallpaper on a SurfaceView: the TV's hardware compositor shows it on its own layer.
+     * (A TextureView copied every frame through the GPU into this window, which stuttered on the TCL.)
+     * It sits *below* the backdrop layers, which turn clear to reveal it (see [crossfadeBackdrop]).
+     */
+    private lateinit var videoView: android.view.SurfaceView
     private var player: android.media.MediaPlayer? = null
-    private var playerSurface: android.view.Surface? = null
+    /** First frame is on screen: the poster can fade away. */
+    private var videoRendering = false
+    /** Both backdrop layers faded out, so the video underneath shows. */
+    private var backdropClear = false
     private var videoPath: String? = null
     private var playerReady = false
     /** The Top Shelf tint covers the video wallpaper. */
@@ -126,7 +134,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     override fun onStart() {
         super.onStart()
         started = true
-        if (videoPath != null && videoView.isAvailable) openPlayer(videoView.surfaceTexture!!)
+        if (videoPath != null && videoView.holder.surface.isValid) openPlayer(videoView.holder.surface)
     }
 
     override fun onPause() {
@@ -146,10 +154,12 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     // ---- video wallpaper ------------------------------------------------------------------
 
-    private fun openPlayer(st: android.graphics.SurfaceTexture) {
+    private fun openPlayer(surface: android.view.Surface) {
         val path = videoPath ?: return
         if (player != null) return
-        val surface = android.view.Surface(st).also { playerSurface = it }
+        // Until the new player's first frame, the poster covers the (empty) video layer.
+        videoRendering = false
+        if (backdropClear) showPosterNow()
         player = android.media.MediaPlayer().apply {
             try {
                 setDataSource(path)
@@ -158,6 +168,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
                 setVolume(0f, 0f)
                 setOnVideoSizeChangedListener { _, w, h -> videoW = w; videoH = h; fitVideo() }
                 setOnPreparedListener { playerReady = true; updateVideoPlayback() }
+                setOnInfoListener { _, what, _ ->
+                    if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                        videoRendering = true
+                        if (shownArtFor == WALL && !videoCovered) crossfadeBackdrop(null)
+                    }
+                    false
+                }
                 setOnErrorListener { _, _, _ -> releasePlayer(); true }
                 prepareAsync()
             } catch (e: Exception) {
@@ -178,19 +195,22 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         playerReady = false
         player?.release()
         player = null
-        playerSurface?.release()
-        playerSurface = null
     }
 
-    /** Centre-crop the video to fill the screen. */
+    /** Poster on the bottom backdrop layer, instantly (no fade): the video layer below is empty. */
+    private fun showPosterNow() {
+        val poster = wallpaper ?: return
+        backA.animate().cancel(); backB.animate().cancel()
+        backA.setImageBitmap(poster); backA.alpha = 1f; backA.visibility = View.VISIBLE
+        backB.alpha = 0f; backB.visibility = View.GONE
+        frontIsA = true; backdropClear = false
+    }
+
+    /** Centre-crop the video to fill the screen: the surface is sized past the edges and centred. */
     private fun fitVideo() {
-        val vw = videoView.width.toFloat()
-        val vh = videoView.height.toFloat()
-        if (videoW <= 0 || videoH <= 0 || vw <= 0f || vh <= 0f) return
-        val scale = maxOf(vw / videoW, vh / videoH)
-        videoView.setTransform(android.graphics.Matrix().apply {
-            setScale(videoW * scale / vw, videoH * scale / vh, vw / 2f, vh / 2f)
-        })
+        if (videoW <= 0 || videoH <= 0) return
+        val scale = maxOf(screenW / videoW.toFloat(), screenH / videoH.toFloat())
+        videoView.layoutParams = FrameLayout.LayoutParams((videoW * scale).toInt(), (videoH * scale).toInt(), Gravity.CENTER)
     }
 
     private fun setVideo(path: String?) {
@@ -199,7 +219,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         videoPath = path
         videoW = 0; videoH = 0
         videoView.visibility = if (path != null) View.VISIBLE else View.GONE
-        if (path != null && started && videoView.isAvailable) openPlayer(videoView.surfaceTexture!!)
+        if (path != null && started && videoView.holder.surface.isValid) openPlayer(videoView.holder.surface)
     }
 
     /** Pick up changes made in Settings (glass, avatar, hidden apps). */
@@ -238,24 +258,26 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     // ---- layout -------------------------------------------------------------------------
 
     private fun buildLayout(): View {
-        val root = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.backdrop)) }
+        // No background of its own: the window background (theme) is already there, and every
+        // full-screen fill costs real frame time on TV GPUs.
+        val root = FrameLayout(this)
         val match = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+
+        // Video wallpaper: muted loop at the very bottom; the backdrop layers above it go clear to show it.
+        videoView = android.view.SurfaceView(this).apply {
+            visibility = View.GONE
+            holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                override fun surfaceCreated(h: android.view.SurfaceHolder) { if (started) openPlayer(h.surface) }
+                override fun surfaceChanged(h: android.view.SurfaceHolder, f: Int, w: Int, hh: Int) = Unit
+                override fun surfaceDestroyed(h: android.view.SurfaceHolder) = releasePlayer()
+            })
+        }
+        root.addView(videoView, FrameLayout.LayoutParams(match))
 
         // Top Shelf: full-width artwork of the focused dock app, cross-faded.
         backA = backdropView().also { root.addView(it, match) }
-        backB = backdropView().also { it.alpha = 0f; root.addView(it, match) }
+        backB = backdropView().also { it.alpha = 0f; it.visibility = View.GONE; root.addView(it, match) }
 
-        // Video wallpaper: muted loop above the poster frame, below shade/scrim/glass.
-        videoView = android.view.TextureView(this).apply {
-            visibility = View.GONE
-            surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
-                override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) { if (started) openPlayer(st) }
-                override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) = fitVideo()
-                override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean { releasePlayer(); return true }
-                override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) = Unit
-            }
-        }
-        root.addView(videoView, match)
 
         // Legibility gradient: clear at the top, darker under title and dock.
         shade = View(this)
@@ -604,17 +626,35 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         adapter.dockGlass?.let { setupGlass(it); it.invalidate() }
     }
 
-    /** Fade the Top Shelf backdrop to [bm] (backB above backA, cross-faded). */
-    private fun crossfadeBackdrop(bm: android.graphics.Bitmap) {
-        backB.animate().cancel()
-        if (frontIsA) {
-            backB.setImageBitmap(bm)
-            backB.animate().alpha(1f).setDuration(FADE_MS).setUpdateListener { adapter.dockGlass?.invalidate() }.start()
-        } else {
-            backA.setImageBitmap(bm)
-            backB.animate().alpha(0f).setDuration(FADE_MS).setUpdateListener { adapter.dockGlass?.invalidate() }.start()
+    /**
+     * Fade the Top Shelf backdrop to [bm] (backB above backA, cross-faded), or with null fade both
+     * layers out to reveal the video wallpaper underneath.
+     */
+    private fun crossfadeBackdrop(bm: android.graphics.Bitmap?) {
+        backA.animate().cancel(); backB.animate().cancel()
+        fun fade(v: View, to: Float) = fadeView(v, to, FADE_MS, update = { adapter.dockGlass?.invalidate() })
+        when {
+            bm == null -> { if (!backdropClear) { backdropClear = true; fade(backA, 0f); fade(backB, 0f) } }
+            backdropClear -> { // over the bare video: fade the new art in on B, A stays clear
+                backdropClear = false
+                backA.alpha = 0f; backA.visibility = View.GONE
+                backB.setImageBitmap(bm); fade(backB, 1f)
+                frontIsA = false
+            }
+            frontIsA -> { backB.setImageBitmap(bm); fade(backB, 1f); frontIsA = false }
+            else -> { backA.setImageBitmap(bm); backA.alpha = 1f; backA.visibility = View.VISIBLE; fade(backB, 0f); frontIsA = true }
         }
-        frontIsA = !frontIsA
+    }
+
+    /**
+     * Fade [v] to [to]. A view at alpha 0 is set GONE: Android then reports its area as transparent,
+     * so over a video wallpaper the TV's compositor skips it instead of blending a full-screen layer.
+     */
+    private fun fadeView(v: View, to: Float, ms: Long, update: (() -> Unit)? = null, end: (() -> Unit)? = null) {
+        if (to > 0f) v.visibility = View.VISIBLE
+        v.animate().alpha(to).setDuration(ms)
+            .setUpdateListener(update?.let { u -> android.animation.ValueAnimator.AnimatorUpdateListener { u() } })
+            .withEndAction { if (to == 0f) v.visibility = View.GONE; end?.invoke() }.start()
     }
 
     /**
@@ -767,10 +807,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         shelfTint = tint
         shownArtFor = null
         crossfadeBackdrop(tint)
-        // A video wallpaper sits above the backdrop; fade it out while the shelf is showing.
-        // Pause after the fade so the last frame doesn't freeze visibly mid-crossfade.
+        // The tint covers the video wallpaper: pause it once the fade has finished.
         videoCovered = true
-        videoView.animate().alpha(0f).setDuration(FADE_MS).withEndAction { updateVideoPlayback() }.start()
+        main.postDelayed({ updateVideoPlayback() }, FADE_MS)
         adapter.dockGlass?.setArtwork(tint, 0)
     }
 
@@ -812,23 +851,15 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     private fun showFallbackArt(entry: AppEntry) {
         if (wallpaper != null) {
-            if (shownArtFor != WALL) { crossfadeBackdrop(wallpaper!!); shownArtFor = WALL }
+            // Video wallpaper: clear the backdrop once frames are coming; the poster until then.
+            if (shownArtFor != WALL) { crossfadeBackdrop(if (videoPath != null && videoRendering) null else wallpaper); shownArtFor = WALL }
             adapter.dockGlass?.setArtwork(wallpaperGlass, 0); return
         }
         if (shownArtFor == entry.packageName) return
         shownArtFor = entry.packageName
         val art = artCache.get(entry.packageName) ?: Artwork.render(entry).also { artCache.put(entry.packageName, it) }
 
-        // backB sits above backA: fade B in over A, or put the new art on A and fade B out.
-        backB.animate().cancel()
-        if (frontIsA) {
-            backB.setImageBitmap(art.backdrop)
-            backB.animate().alpha(1f).setDuration(FADE_MS).setUpdateListener { adapter.dockGlass?.invalidate() }.start()
-        } else {
-            backA.setImageBitmap(art.backdrop)
-            backB.animate().alpha(0f).setDuration(FADE_MS).setUpdateListener { adapter.dockGlass?.invalidate() }.start()
-        }
-        frontIsA = !frontIsA
+        crossfadeBackdrop(art.backdrop)
 
         title.animate().cancel()
         title.animate().alpha(0f).setDuration(FADE_MS / 2).withEndAction {
@@ -875,12 +906,11 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             c.scale(sx, sy); c.translate(dx, dy); draw(c)
             c.restoreToCount(save)
         }
+        // A SurfaceView can't be read back cheaply: the video wallpaper's poster stands in for it.
+        if (videoPath != null) wallpaper?.let { c.drawBitmap(it, null, android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat()), null) }
         layer(backA) { backA.draw(it) }
         layer(backB) { backB.draw(it) }
-        if (videoView.visibility == View.VISIBLE && videoView.alpha > 0.01f) videoView.getBitmap(w, h)?.let { f ->
-            val save = c.saveLayerAlpha(null, (videoView.alpha * 255).toInt()); c.drawBitmap(f, 0f, 0f, null); c.restoreToCount(save); f.recycle()
-        }
-        layer(shade) { shade.draw(it) }
+        layer(shade, 0f, shade.top.toFloat()) { shade.draw(it) }
         layer(recoBox, recoBox.left.toFloat(), recoBox.top.toFloat()) { recoBox.draw(it) }
         return Frost.make(bm)
     }
