@@ -146,6 +146,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         started = true
         requestPlayer()
         if (loadingCards.isNotEmpty()) startPulse()
+        // Back on Home from an app: once the return has settled, ask Android to drop other apps'
+        // cached processes (see freeMemory).
+        main.removeCallbacks(freeMemory)
+        main.postDelayed(freeMemory, FREE_MEMORY_DELAY_MS)
     }
 
     override fun onPause() {
@@ -160,7 +164,43 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     override fun onStop() {
         started = false
         releasePlayer()
+        main.removeCallbacks(freeMemory)
+        stopPulse()
         super.onStop()
+    }
+
+    /** App Home launched last: spared by [freeMemory], so going straight back to it is not a cold start. */
+    private var lastLaunched: String? = null
+
+    /**
+     * Asks Android to stop the *cached* processes of other apps (killBackgroundProcesses: never one
+     * that is visible, playing, or running a foreground service), except Prism and [lastLaunched].
+     * The TCL keeps heavy apps resident (Xstream, YouTube, NetMirror: 80-120 MB each) until its swap is
+     * full; then the Mali driver can't get memory for a texture and HWUI aborts Home with "GL error:
+     * Out of memory" (logged: swap 569/614 MB used, load average 24, with 600 MB "available").
+     */
+    private val freeMemory = Runnable {
+        val keep = setOf(packageName, lastLaunched)
+        val pkgs = apps.map { it.packageName }.filter { it !in keep }
+        val am = getSystemService(android.app.ActivityManager::class.java)
+        loader.execute { pkgs.forEach { runCatching { am.killBackgroundProcesses(it) } } }
+        Diag.event("freeMemory ${pkgs.size} packages")
+    }
+
+    /**
+     * Drop what is cheap to rebuild (Android's TV memory guidance), keep what's on screen. Also while
+     * Home is visible but the TV runs low (RUNNING_LOW / CRITICAL): on a 1.5-2 GB TV the system is
+     * then close to killing apps, and these caches are what Home can give back without a visible change.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        Diag.event("trimMemory level=$level")
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            Channels.trim()
+            artCache.evictAll()
+            // Home is visible and the TV is short on memory right now: free other apps' caches too.
+            if (level < TRIM_MEMORY_UI_HIDDEN) { main.removeCallbacks(freeMemory); main.post(freeMemory) }
+        }
     }
 
     // ---- video wallpaper ------------------------------------------------------------------

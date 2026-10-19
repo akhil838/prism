@@ -21,6 +21,8 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Long-press menu → Delete App (opens the system uninstall dialog). -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- Home frees other apps' cached processes when the TV runs out of memory (killBackgroundProcesses). -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
 
     <application
         android:allowBackup="false"
