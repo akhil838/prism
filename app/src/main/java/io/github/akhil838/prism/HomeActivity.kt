@@ -315,7 +315,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         lifecycleResumed = true
         resetIdle()
         // Expired aerial downloads (6 h after they stopped being the wallpaper).
-        Thread { Wallpaper.pruneDownloads(applicationContext) }.start()
+        loader.execute { Wallpaper.pruneDownloads(applicationContext) }
         glassStyle = store.glass()
         perf = store.perf()
         adapter.dockGlass?.applyStyle()
@@ -571,7 +571,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         }
     }
 
-    private val loader = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val loader = backgroundPool("PrismLoader")
     private var loadGen = 0
 
     /**
@@ -1095,9 +1095,24 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             adapter.dockGlass?.setArtwork(wallpaperGlass, 0); return
         }
         if (shownArtFor == entry.packageName) return
-        shownArtFor = entry.packageName
-        val art = artCache.get(entry.packageName) ?: Artwork.render(entry).also { artCache.put(entry.packageName, it) }
+        val pkg = entry.packageName
+        shownArtFor = pkg
+        artCache.get(pkg)?.let { showArt(entry, it); return }
+        // Rendering + blurring the banner takes tens of ms on the TV's CPU: off the main thread, so
+        // resting on a dock app no longer drops frames (artCache is emptied every time Home is hidden).
+        UiWork.submit("art") {
+            val art = Artwork.render(entry)
+            main.post {
+                if (isDestroyed) return@post
+                artCache.put(pkg, art)
+                Diag.bitmap("art $pkg", art.backdrop)
+                // Focus moved on, or the wallpaper / a shelf tint took over, while it rendered: cache only.
+                if (shownArtFor == pkg) showArt(entry, art)
+            }
+        }
+    }
 
+    private fun showArt(entry: AppEntry, art: Art) {
         crossfadeBackdrop(art.backdrop)
         title.animate().cancel()
         title.animate().alpha(0f).setDuration(FADE_MS / 2).withEndAction {

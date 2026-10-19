@@ -44,7 +44,9 @@ object Channels {
     fun programs(ctx: Context, pkg: String, done: (List<Program>) -> Unit) {
         programCache[pkg]?.let { (t, list) -> if (System.currentTimeMillis() - t < TTL_MS) { done(list); return } }
         val app = ctx.applicationContext
-        io.execute {
+        // On the shared UI work queue: while the user moves along the dock, only the latest app's
+        // query runs (an earlier one still waiting is dropped; its shelf is no longer wanted).
+        UiWork.submit("programs") {
             val list = runCatching { query(app, pkg) }.onFailure { Log.w(TAG, "query $pkg failed: $it") }.getOrDefault(emptyList())
             main.post {
                 programCache[pkg] = System.currentTimeMillis() to list
