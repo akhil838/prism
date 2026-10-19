@@ -94,8 +94,30 @@ object DeviceInfo {
                 Display.HdrCapabilities.HDR_TYPE_HLG -> "HLG"; Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS -> "HDR10+"; else -> "HDR($it)" }
         }.orEmpty()
         val rates = d.supportedModes.filter { it.physicalWidth == mode.physicalWidth }.map { Math.round(it.refreshRate) }.distinct().sorted()
-        return Item("Display", "${mode.physicalWidth}×${mode.physicalHeight} · ${Math.round(mode.refreshRate)} Hz",
-            (if (hdr.isEmpty()) "No HDR" else hdr.joinToString(", ")) + (if (rates.size > 1) " · modes ${rates.joinToString("/")} Hz" else ""))
+        val ui = "${mode.physicalWidth}×${mode.physicalHeight}"
+        // TVs often draw Android's interface at 1080p on a 4K panel; Android's display mode only reports
+        // the interface. The panel size is in sys.display-size (TCL/Realtek; also read by Netflix).
+        val panel = panelSize()?.takeIf { it != ui } ?: ui
+        val (pw, ph) = panel.split('×').map { it.toIntOrNull() ?: 0 }
+        val label = when (minOf(pw, ph)) { in 2100..2200 -> " (4K)"; in 1060..1100 -> " (1080p)"; in 700..740 -> " (720p)"; else -> "" }
+        return Item("Display", "$panel$label · ${Math.round(mode.refreshRate)} Hz",
+            listOfNotNull(
+                if (panel != ui) "Interface drawn at $ui" else null,
+                if (hdr.isEmpty()) "No HDR" else hdr.joinToString(", "),
+                if (rates.size > 1) "modes ${rates.joinToString("/")} Hz" else null,
+            ).joinToString(" · "))
+    }
+
+    /** "3840×2160" from sys.display-size, or null when the TV doesn't publish it / it isn't readable. */
+    private fun panelSize(): String? {
+        val raw = runCatching {
+            Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "sys.display-size") as String
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: runCatching {
+            Runtime.getRuntime().exec(arrayOf("getprop", "sys.display-size")).inputStream.bufferedReader().use { it.readText().trim() }
+        }.getOrNull()
+        android.util.Log.d("PrismDevice", "sys.display-size=$raw")
+        val m = raw?.let { Regex("(\\d{3,5})\\s*[x×X]\\s*(\\d{3,5})").find(it) } ?: return null
+        return "${m.groupValues[1]}×${m.groupValues[2]}"
     }
 
     private fun network(ctx: Context): Item? {
