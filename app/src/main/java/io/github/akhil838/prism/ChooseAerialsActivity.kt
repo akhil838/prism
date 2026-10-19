@@ -45,9 +45,10 @@ class ChooseAerialsActivity : Activity() {
         store = DockStore(this)
         setContentView(buildLayout())
         Aerials.load(this) { f ->
+            if (isDestroyed) return@load
             feed = f ?: return@load
             f.categories.forEach { c -> catList.addView(categoryView(c), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (64 * pt).toInt()).apply { bottomMargin = (8 * pt).toInt() }) }
-            show(f.categories.first())
+            f.categories.firstOrNull()?.let(::show)
             catViews.firstOrNull()?.requestFocus()
         }
     }

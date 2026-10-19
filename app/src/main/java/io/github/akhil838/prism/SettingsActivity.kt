@@ -363,6 +363,7 @@ class SettingsActivity : Activity() {
 
     /** Back to the previous page after a selection (drops the focus entry the click pushed). */
     private fun pop() {
+        if (stack.size <= 1) return // the root page stays (a late async result must not empty the stack)
         focusStack.removeLastOrNull()
         stack.removeLast()
         render(focusStack.removeLastOrNull() ?: 0)
@@ -808,9 +809,13 @@ class SettingsActivity : Activity() {
                     cell.setImageDrawable(BitmapDrawable(resources, thumb))
                     cell.setOnClickListener {
                         Toast.makeText(this, R.string.wallpaper_downloading, Toast.LENGTH_SHORT).show()
+                        val page = stack.last()
                         Avatar.fetch(Wallpaper.url(id, 1920, 1080)) { full ->
+                            if (isDestroyed) return@fetch
                             if (full == null) { Toast.makeText(this, R.string.avatar_failed, Toast.LENGTH_LONG).show(); return@fetch }
-                            Wallpaper.save(this, full); wallpaperChanged(); focusStack.addLast(0); pop()
+                            Wallpaper.save(this, full); wallpaperChanged()
+                            // The download can take seconds: leave the gallery only if the user is still on it.
+                            if (stack.lastOrNull() === page) { focusStack.addLast(0); pop() }
                         }
                     }
                 }

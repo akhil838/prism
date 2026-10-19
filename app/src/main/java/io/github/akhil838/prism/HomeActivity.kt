@@ -143,6 +143,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     override fun onDestroy() {
         releasePlayer()
+        main.removeCallbacksAndMessages(null)
         unregisterReceiver(packageReceiver)
         unregisterReceiver(tickReceiver)
         diagReceiver?.let { unregisterReceiver(it) }
@@ -164,9 +165,27 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         lifecycleResumed = false
         if (strip.expanded) { strip.collapse(); stripReturn = null }
         main.removeCallbacks(idleSaver)
-        // Settings (and anything else of ours) opens over the same frosted Top Shelf.
-        Frost.last = frostSnapshot()
         super.onPause()
+    }
+
+    /**
+     * Settings (and anything else of ours) opens over the same frosted Top Shelf: snapshot it only
+     * for our own screens, not on every app launch (it renders the shelf in software and blurs it on
+     * the main thread, right when the launched app needs the CPU most).
+     *
+     * The screen saver starts its own video at once, before Home's onStop would release the wallpaper
+     * player: free the wallpaper's hardware decoder first (MediaTek TVs have very few, and a second
+     * one in the same process fails to configure).
+     */
+    override fun startActivity(intent: Intent, options: Bundle?) {
+        val target = intent.component?.packageName ?: intent.`package`
+        if (target == packageName) Frost.last = frostSnapshot()
+        else if (target != null) lastLaunched = target
+        if (intent.component?.className == ScreenSaverActivity::class.java.name) {
+            if (backdropClear) showPosterNow()
+            releasePlayer()
+        }
+        super.startActivity(intent, options)
     }
 
     override fun onStop() {
@@ -576,7 +595,6 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             }
             override fun startScreenSaver() { startActivity(Intent(this@HomeActivity, ScreenSaverActivity::class.java)) }
         })
-        strip.setAvatar(Avatar.load(this))
         statusPill = strip
         root.addView(strip, match)
         appMenu = AppMenu(this, dims)
@@ -919,7 +937,14 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         return true
     }
 
+    private var avatarShown = false
+    private var avatar: android.graphics.Bitmap? = null
+
+    /** [Avatar.load] returns the same bitmap until the picture changes: only a change is re-set (a new texture upload). */
     private fun showAvatar(b: android.graphics.Bitmap?) {
+        if (avatarShown && b === avatar) return
+        avatarShown = true
+        avatar = b
         strip.setAvatar(b)
     }
 
