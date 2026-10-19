@@ -141,6 +141,10 @@ object Channels {
         }
     }
 
+    /** Shelf whose images are wanted; queued loads for any other shelf are skipped. */
+    @Volatile private var wanted: String? = null
+
+    fun focus(tag: String) { wanted = tag }
     private fun decode(app: Context, uri: Uri, maxW: Int): Bitmap? {
         val bytes = when (uri.scheme) {
             "http", "https" -> (URL(uri.toString()).openConnection() as HttpURLConnection).run {
@@ -153,8 +157,14 @@ object Channels {
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
         var s = 1
         while (o.outWidth / (s * 2) >= maxW) s *= 2
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
+        val bm = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
             inSampleSize = s; inPreferredConfig = Bitmap.Config.RGB_565
-        })
+        }) ?: return null
+        // Power-of-two sampling leaves up to 2x the card width (4x the pixels, all of it GPU texture
+        // while the card is shown): finish with an exact scale to the card width.
+        if (bm.width <= maxW * 1.1f) return bm
+        val out = Bitmap.createScaledBitmap(bm, maxW, (bm.height * maxW / bm.width.toFloat()).toInt().coerceAtLeast(1), true)
+        if (out !== bm) bm.recycle()
+        return out
     }
 }

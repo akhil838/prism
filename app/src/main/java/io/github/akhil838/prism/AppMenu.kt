@@ -147,7 +147,7 @@ class AppMenu(context: Context, private val dims: Dims) : FrameLayout(context) {
                 val c = if (has) (if (item.danger) 0xFFD70015.toInt() else 0xFF1C1C1E.toInt()) else fg
                 title.setTextColor(c); icon?.setColorFilter(c, PorterDuff.Mode.SRC_IN)
                 chevron?.setTextColor(if (has) 0xFF6E6A75.toInt() else 0xB3FFFFFF.toInt())
-                v.animate().scaleX(if (has) 1.04f else 1f).scaleY(if (has) 1.04f else 1f).translationZ(if (has) 8 * pt else 0f).setDuration(140).start()
+                v.animate().scaleX(if (has) 1.04f else 1f).scaleY(if (has) 1.04f else 1f).setDuration(140).start()
             }
             setOnClickListener { select(item) }
             setOnKeyListener { _, k, e ->

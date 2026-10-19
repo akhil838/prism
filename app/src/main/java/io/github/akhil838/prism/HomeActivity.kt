@@ -65,13 +65,12 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private var wallpaper: android.graphics.Bitmap? = null
     private lateinit var shade: View
     /**
-     * Video wallpaper on a TextureView, at the bottom of the stack; the backdrop layers above it go
-     * clear to reveal it (see [crossfadeBackdrop]). Not a SurfaceView: on Android < 14 TVs (TCL /
-     * Realtek) the compositor keeps a buffer cache per video producer that is never returned, so
-     * every new player drained the shared graphics memory until the renderer crashed (GL OOM).
+     * Video wallpaper on a SurfaceView, at the bottom of the stack; the backdrop layers above it go
+     * clear to reveal it (see [crossfadeBackdrop]). Frames never enter this process's GPU memory
+     * (a TextureView imported each one as a GL texture and crashed the renderer on the TCL).
+     * The player is released on stop, so the hardware decoder is free for other apps.
      */
-    private lateinit var videoView: android.view.TextureView
-    private var videoSurface: android.view.Surface? = null
+    private lateinit var videoView: android.view.SurfaceView
     private var player: android.media.MediaPlayer? = null
     /** First frame is on screen: the poster can fade away. */
     private var videoRendering = false
@@ -85,6 +84,8 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private var videoH = 0
     private var started = false
     private var wallpaperGlass: android.graphics.Bitmap? = null
+    /** [Wallpaper.key] of the wallpaper on screen; [reload] decodes again only when it changes. */
+    private var wallKey: String? = null
     private val artCache = LruCache<String, Art>(12)
 
     private val packageReceiver = object : BroadcastReceiver() {
@@ -100,10 +101,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         repo = AppRepository(this)
         store = DockStore(this)
         glassStyle = store.glass()
+        perf = store.perf()
         val m = resources.displayMetrics
         screenH = minOf(m.widthPixels, m.heightPixels)
         screenW = maxOf(m.widthPixels, m.heightPixels)
         dims = Dims(maxOf(m.widthPixels, m.heightPixels), screenH)
+        // Dev switches first: some (text effects) are read while the layout is built.
+        diagReceiver = Diag.register(this, ::onDiag)
         setContentView(buildLayout())
         // Home draws its own backdrop / frost everywhere: a window background is one more full-screen fill.
         window.setBackgroundDrawable(null)
@@ -133,13 +137,14 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         releasePlayer()
         unregisterReceiver(packageReceiver)
         unregisterReceiver(tickReceiver)
+        diagReceiver?.let { unregisterReceiver(it) }
         super.onDestroy()
     }
 
     override fun onStart() {
         super.onStart()
         started = true
-        if (videoPath != null) videoView.surfaceTexture?.let { openPlayer(surfaceFor(it)) }
+        requestPlayer()
     }
 
     override fun onPause() {
@@ -159,33 +164,56 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     // ---- video wallpaper ------------------------------------------------------------------
 
+    /**
+     * The video wallpaper starts last: once Home is idle ([VIDEO_START_DELAY_MS] after it shows),
+     * and only while it would be visible (not under a shelf tint or the grid). The poster stands in
+     * until then, so tiles, wallpaper and shelf get the memory first and the decoder's buffers are
+     * not allocated in the same moment.
+     */
+    private fun requestPlayer() {
+        main.removeCallbacks(startPlayer)
+        if (videoPath != null && player == null) main.postDelayed(startPlayer, VIDEO_START_DELAY_MS)
+    }
+
+    private val startPlayer = Runnable {
+        android.os.Looper.myQueue().addIdleHandler {
+            if (started && !videoCovered && !inGrid && videoView.holder.surface.isValid) openPlayer(videoView.holder.surface)
+            false
+        }
+    }
+
     private fun openPlayer(surface: android.view.Surface) {
         val path = videoPath ?: return
+        Diag.event("player open")
         if (player != null) return
         // Until the new player's first frame, the poster covers the (empty) video layer.
         videoRendering = false
         if (backdropClear) showPosterNow()
-        player = android.media.MediaPlayer().apply {
-            try {
-                setDataSource(path)
-                setSurface(surface)
-                isLooping = true
-                setVolume(0f, 0f)
-                setOnVideoSizeChangedListener { _, w, h -> videoW = w; videoH = h; fitVideo() }
-                setOnPreparedListener { playerReady = true; updateVideoPlayback() }
-                setOnInfoListener { _, what, _ ->
-                    if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
-                        videoRendering = true
-                        if (shownArtFor == WALL && !videoCovered) crossfadeBackdrop(null)
-                    }
-                    false
+        val mp = android.media.MediaPlayer()
+        try {
+            mp.setDataSource(path)
+            mp.setSurface(surface)
+            mp.isLooping = true
+            mp.setVolume(0f, 0f)
+            mp.setOnVideoSizeChangedListener { _, w, h -> videoW = w; videoH = h; fitVideo() }
+            mp.setOnPreparedListener { playerReady = true; Diag.event("player prepared"); updateVideoPlayback() }
+            mp.setOnInfoListener { _, what, _ ->
+                if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                    videoRendering = true
+                    Diag.event("player first frame")
+                    if (shownArtFor == WALL && !videoCovered) crossfadeBackdrop(null)
                 }
-                setOnErrorListener { _, _, _ -> releasePlayer(); true }
-                prepareAsync()
-            } catch (e: Exception) {
-                releasePlayer()
+                false
             }
+            mp.setOnErrorListener { _, _, _ -> releasePlayer(); true }
+            mp.prepareAsync()
+        } catch (e: Exception) {
+            // Unreadable file / no decoder: free this instance (it was never assigned to [player]),
+            // the poster stays up.
+            mp.release()
+            return
         }
+        player = mp
     }
 
     /**
@@ -195,12 +223,27 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
      * or across dock apps, must not touch the player at all.
      */
     private fun updateVideoPlayback() {
-        val p = player ?: return
+        placeVideo()
+        val p = player ?: run { if (!videoCovered && !inGrid) requestPlayer(); return }
         if (!playerReady) return
         main.removeCallbacks(pauseVideo)
         if (!videoCovered && !inGrid) runCatching { if (!p.isPlaying) p.start() }
         else main.postDelayed(pauseVideo, VIDEO_PAUSE_DELAY_MS)
     }
+
+    /**
+     * The video layer stays on screen only while it can be seen. Under the shelf tint (once the tint
+     * has faded in) or the grid frost it moves off-screen, so the compositor stops blending it: on
+     * the TCL that blend is GPU work every frame (the video is never on a hardware overlay), and
+     * with it running under a busy Home frame the GPU ran out of memory.
+     */
+    private fun placeVideo() {
+        main.removeCallbacks(hideVideoLayer)
+        if (underHidden || videoCovered) main.postDelayed(hideVideoLayer, FADE_MS + 100)
+        else videoView.translationX = 0f
+    }
+
+    private val hideVideoLayer = Runnable { if (underHidden || videoCovered) videoView.translationX = screenW * 2f }
 
     private val pauseVideo = Runnable {
         val p = player ?: return@Runnable
@@ -208,14 +251,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     }
 
     private fun releasePlayer() {
+        if (player != null) Diag.event("player release")
+        main.removeCallbacks(startPlayer)
         playerReady = false
         player?.release()
         player = null
     }
 
-    /** One Surface per SurfaceTexture, reused across players (released with the texture). */
-    private fun surfaceFor(st: android.graphics.SurfaceTexture): android.view.Surface =
-        videoSurface ?: android.view.Surface(st).also { videoSurface = it }
 
     /** Poster on the bottom backdrop layer, instantly (no fade): the video layer below is empty. */
     private fun showPosterNow() {
@@ -233,13 +275,38 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         videoView.layoutParams = FrameLayout.LayoutParams((videoW * scale).toInt(), (videoH * scale).toInt(), Gravity.CENTER)
     }
 
-    private fun setVideo(path: String?) {
+    /** Video wallpaper file as set by the user; [videoPath] is what plays (null when video is turned off). */
+    private var wallVideo: String? = null
+
+    /** Video wallpapers play (Settings → Performance, and the dev switch). */
+    private fun videoAllowed() = perf.video && Diag.video
+
+    private fun setVideo(wanted: String?) {
+        wallVideo = wanted
+        val path = wanted?.takeIf { videoAllowed() }
         if (path == videoPath) return
         releasePlayer()
         videoPath = path
         videoW = 0; videoH = 0
         videoView.visibility = if (path != null) View.VISIBLE else View.GONE
-        if (path != null && started) videoView.surfaceTexture?.let { openPlayer(surfaceFor(it)) }
+        requestPlayer()
+    }
+
+    private var diagReceiver: BroadcastReceiver? = null
+
+    /** adb debug switches changed (see [Diag]): re-apply what they affect. */
+    private fun onDiag(i: Intent) {
+        // Wallpaper key includes the video switch: re-decode (full-size still vs. half-size poster).
+        if (i.hasExtra("video")) { wallKey = null; reload(keepFocus = true) }
+        if (i.hasExtra("shelf")) { cardsFor = null; focusDock(0) }
+        if (i.hasExtra("glass")) adapter.dockGlass?.invalidate()
+        if (i.getBooleanExtra("dump", false)) Diag.dump(listOf(
+            "apps=${apps.size} inGrid=$inGrid video=$videoPath player=${player != null} ready=$playerReady rendering=$videoRendering covered=$videoCovered",
+            "wallpaper=${wallpaper?.let { "${it.width}x${it.height} ${it.config} ${it.byteCount shr 10}KB" }}",
+            "shelf=$cardsFor cards=${recoRow.childCount} cardArt=${cardArt.values.sumOf { it.byteCount } shr 10}KB tints=${tints.size}",
+            "artCache=${artCache.size()} frost=${frostBitmap?.byteCount?.shr(10)}KB",
+            "nativeHeap=${android.os.Debug.getNativeHeapAllocatedSize() shr 20}MB javaHeap=${(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) shr 20}MB",
+        ))
     }
 
     /** Pick up changes made in Settings (glass, avatar, hidden apps). */
@@ -250,6 +317,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         // Expired aerial downloads (6 h after they stopped being the wallpaper).
         Thread { Wallpaper.pruneDownloads(applicationContext) }.start()
         glassStyle = store.glass()
+        perf = store.perf()
         adapter.dockGlass?.applyStyle()
         showAvatar(Avatar.load(this))
         if (store.rev() != seenRev) reload(keepFocus = true)
@@ -288,20 +356,29 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private fun buildLayout(): View {
         // No background of its own: the window background (theme) is already there, and every
         // full-screen fill costs real frame time on TV GPUs.
-        val root = FrameLayout(this)
+        // Never reports a transparent region to the compositor: over a SurfaceView, Android otherwise
+        // marks undrawn areas transparent, and that report lags our own drawing by a few frames, so
+        // views appearing over the video (frost, status circles, panels) popped in or were cut off.
+        // The SurfaceView still shows through: HWUI clears its hole in the window.
+        val root = object : FrameLayout(this) {
+            override fun gatherTransparentRegion(region: android.graphics.Region?): Boolean {
+                region?.op(0, 0, width, height, android.graphics.Region.Op.DIFFERENCE)
+                return true
+            }
+        }
         val match = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
         // Video wallpaper: muted loop at the very bottom; the backdrop layers above it go clear to show it.
-        videoView = android.view.TextureView(this).apply {
+        // A SurfaceView: the TV's video hardware / compositor shows the frames. With a TextureView every
+        // decoded frame became a GL texture in this process, and on the TCL (Mali-470, GLES 2) the
+        // renderer ran out of GPU memory right after the first frame (logged 166 ms later).
+        videoView = android.view.SurfaceView(this).apply {
             visibility = View.GONE
-            surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
-                override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) { if (started) openPlayer(surfaceFor(st)) }
-                override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) = Unit
-                override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
-                    releasePlayer(); videoSurface?.release(); videoSurface = null; return true
-                }
-                override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) = Unit
-            }
+            holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                override fun surfaceCreated(h: android.view.SurfaceHolder) = requestPlayer()
+                override fun surfaceChanged(h: android.view.SurfaceHolder, f: Int, w: Int, hh: Int) = Unit
+                override fun surfaceDestroyed(h: android.view.SurfaceHolder) = releasePlayer()
+            })
         }
         root.addView(videoView, FrameLayout.LayoutParams(match))
 
@@ -349,14 +426,14 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             setTextSize(TypedValue.COMPLEX_UNIT_PX, 42 * dims.pt)
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            setShadowLayer(16 * dims.pt, 0f, 2 * dims.pt, 0x99000000.toInt())
+            if (Diag.textfx) setShadowLayer(16 * dims.pt, 0f, 2 * dims.pt, 0x99000000.toInt())
         }
         recoDesc = TextView(this).apply {
             setTextColor(0xD9FFFFFF.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_PX, 24 * dims.pt)
             maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
             setLineSpacing(0f, 1.1f)
-            setShadowLayer(12 * dims.pt, 0f, 2 * dims.pt, 0x99000000.toInt())
+            if (Diag.textfx) setShadowLayer(12 * dims.pt, 0f, 2 * dims.pt, 0x99000000.toInt())
         }
         val info = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
         info.addView(recoTitle)
@@ -429,9 +506,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     // ---- data ---------------------------------------------------------------------------
 
     /**
-     * Reload apps and wallpaper without blocking the main thread: wallpaper decode and the app list
-     * (cached copy first on a cold start, then a fresh read from the package manager) are done on
-     * [loader], each result applied as it arrives. Superseded reloads are dropped ([loadGen]).
+     * Reload apps and wallpaper without blocking the main thread, most important first, on [loader]:
+     *  1. app tiles (cold start: the cached tile images, a few small files),
+     *  2. the wallpaper (only if it changed),
+     *  3. the package-manager refresh: on a cold start deferred until Home is idle
+     *     ([REFRESH_DELAY_MS]) and checked by label first, so unchanged apps load no APK image and
+     *     rewrite no cache; package broadcasts and Settings changes refresh right away.
+     * Each result is applied as it arrives; superseded reloads are dropped ([loadGen]).
      */
     private fun reload(keepFocus: Boolean) {
         val gen = ++loadGen
@@ -439,28 +520,49 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         seenRev = store.rev()
         val coldStart = apps.isEmpty()
         val m = resources.displayMetrics
+        val shownWall = wallKey
+        fun live() = gen == loadGen && !isDestroyed
         loader.execute {
-            val video = Wallpaper.videoPath(this)
-            val wall = if (video != null) Wallpaper.poster(video, m.widthPixels, m.heightPixels)
-                       else Wallpaper.load(this, m.widthPixels, m.heightPixels)
-            val glass = wall?.let { Wallpaper.glassOf(it) }
-            main.post { if (gen == loadGen && !isDestroyed) applyWallpaper(video, wall, glass) }
             val cached = if (coldStart) repo.cached() else null
-            if (cached != null) main.post { if (gen == loadGen && !isDestroyed) applyApps(cached, focusedTag) }
-            val fresh = repo.load()
-            main.post {
-                if (gen != loadGen || isDestroyed) return@post
-                // Started from the cache and nothing changed: keep the tiles, take the live entries.
-                if (cached != null && repo.same(cached, fresh)) apps = fresh
-                else applyApps(fresh, focusedTag ?: currentFocus?.tag as? String) // keep wherever the user went
+            if (cached != null) main.post { if (live()) applyApps(cached, focusedTag) }
+            val video = Wallpaper.videoPath(this)
+            val plays = video != null && videoAllowed()
+            // The key notes whether the video plays: turning video off needs the full-size still.
+            val key = Wallpaper.key(this, video) + if (plays) "" else ":still"
+            // Package broadcasts and Settings visits land here often: an unchanged wallpaper is not
+            // decoded again (each decode was a new full-screen texture, and for a video a second
+            // hardware decode next to the playing one, with the poster put back over the video).
+            if (key != shownWall) {
+                // A video's poster only shows until the first frame (~1 s): half resolution is enough
+                // and is a quarter of the memory (1 MB instead of 4 MB, kept while Home lives).
+                // A still that is the wallpaper itself (video turned off) is decoded full size.
+                val wall = if (video != null) (if (plays) Wallpaper.poster(video, m.widthPixels / 2, m.heightPixels / 2)
+                                               else Wallpaper.poster(video, m.widthPixels, m.heightPixels))
+                           else Wallpaper.load(this, m.widthPixels, m.heightPixels)
+                val glass = wall?.let { Wallpaper.glassOf(it) }
+                main.post { if (live()) applyWallpaper(key, video, wall, glass) }
             }
-            repo.save(fresh)
+            val refresh = {
+                loader.execute {
+                    if (!live() || (cached != null && repo.matches(cached))) return@execute
+                    val fresh = repo.loadTiles()
+                    main.post { if (live()) applyApps(fresh, focusedTag ?: currentFocus?.tag as? String) }
+                    repo.save(fresh)
+                }
+            }
+            if (cached == null) refresh() else main.post { whenIdle(REFRESH_DELAY_MS, refresh) }
         }
     }
 
+    /** Runs [block] once the main thread has nothing to do, at least [delayMs] from now. */
+    private fun whenIdle(delayMs: Long, block: () -> Unit) {
+        main.postDelayed({ android.os.Looper.myQueue().addIdleHandler { block(); false } }, delayMs)
+    }
+
     private fun applyApps(list: List<AppEntry>, focusedTag: String?) {
+        Diag.event("applyApps n=${list.size}")
         apps = list
-        artCache.evictAll()
+        // Top Shelf art is per package and survives; packageReceiver evicts updated apps.
         cardsFor = null  // settings/app changes: rebuild the shelf from (cached) data
         shownArtFor = null
         rebuild {
@@ -583,6 +685,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     override fun onFocused(entry: AppEntry, inDock: Boolean) {
         if (inDock) showArtwork(entry)
     }
+
+    /** Dock app whose Top Shelf is waiting for focus to rest ([SHELF_SETTLE_MS]). */
+    private var artPending: AppEntry? = null
+    private val showPendingArt = Runnable { artPending?.let { artPending = null; showArtwork(it) } }
 
     // ---- move mode (tvOS long-press): tile grows + wiggles, D-pad repositions, OK/Back drops ----
 
@@ -710,7 +816,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     }
 
     /** Wallpaper replaces per-app artwork as the Top Shelf; the glass frosts from it (decoded on [loader]). */
-    private fun applyWallpaper(video: String?, wall: android.graphics.Bitmap?, glass: android.graphics.Bitmap?) {
+    private fun applyWallpaper(key: String, video: String?, wall: android.graphics.Bitmap?, glass: android.graphics.Bitmap?) {
+        Diag.bitmap("wallpaper $key", wall)
+        wallKey = key
         wallpaper = wall
         setVideo(video)
         wallpaperGlass = glass
@@ -747,7 +855,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
                 backB.setImageBitmap(bm); fade(backB, 1f)
                 frontIsA = false
             }
-            frontIsA -> { backB.setImageBitmap(bm); fade(backB, 1f); frontIsA = false }
+            // B fades in over A; once it covers A completely, A stops drawing (one full-screen
+            // image less in every frame until the next crossfade brings A back).
+            frontIsA -> {
+                backB.setImageBitmap(bm); frontIsA = false
+                fadeView(backB, 1f, FADE_MS, update = { adapter.dockGlass?.invalidate() },
+                    end = { if (!frontIsA && backB.alpha >= 1f) backA.visibility = View.GONE })
+            }
             else -> { backA.setImageBitmap(bm); backA.alpha = 1f; backA.visibility = View.VISIBLE; fade(backB, 0f); frontIsA = true }
         }
     }
@@ -769,7 +883,7 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     private fun showRecommendations(entry: AppEntry) {
         val pkg = entry.packageName
         recoFor = pkg
-        if (!Channels.allowed(this) || !store.showReco()) { hideReco(entry); return }
+        if (!Diag.shelf || !Channels.allowed(this) || !store.showReco()) { hideReco(entry); return }
         // Back on the same app (e.g. Down from a card): keep the shelf exactly as it is, like tvOS.
         if (cardsFor == pkg && recoRow.childCount > 0) return
         shelfProgram = null
@@ -803,6 +917,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         cardsFor = pkg
         cardIndex = 0
         cardArt.clear(); tints.clear(); shelfTint = null
+        var eager = 0 // cards on screen at rest, plus one: loaded right away
+        // Only this app's card images are wanted now: queued loads for the previous app are dropped.
+        Channels.focus(pkg)
         val h = cardH
         val gap = (screenW * CARD_GAP).toInt()
         val maxW = screenW - 2 * dims.margin
@@ -823,9 +940,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
                 contentDescription = p.title
                 setOnFocusChangeListener { v, has ->
                     val sc = if (has) CARD_FOCUS_SCALE else 1f
-                    v.animate().scaleX(sc).scaleY(sc).translationZ(if (has) 24 * dims.pt else 0f)
+                    v.animate().scaleX(sc).scaleY(sc)
                         .setDuration(220).setInterpolator(SCROLL_EASE).start()
-                    if (has) { cardIndex = i; scrollShelfTo(v); focusCard(p) }
+                    if (has) { cardIndex = i; loadCardsThrough(i + CARDS_AHEAD); scrollShelfTo(v); focusCard(p) }
                 }
                 setOnClickListener { openProgram(p, pkg) }
                 setOnKeyListener { _, keyCode, ev ->
@@ -840,6 +957,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
                 }
             }
             recoRow.addView(card, android.widget.LinearLayout.LayoutParams(w, h).apply { if (i > 0) leftMargin = gap })
+            // Card art loads on demand (visible cards first, then ahead of focus), not all 8 at once:
+            // off-screen cards keep their colour placeholder and cost no memory until reached.
+            val left = dims.margin + total + if (i > 0) gap else 0
             total += w + if (i > 0) gap else 0
             p.image?.let { uri ->
                 Channels.image(this, uri, w) { bm ->
@@ -849,8 +969,21 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
                     if (shelfProgram === p) applyTint(p)
                 }
             }
+            if (left < screenW) eager = i + 1
         }
         recoRow.layoutParams = recoRow.layoutParams.apply { width = total }
+        loadCardsThrough(eager)
+    }
+
+    /** Per-card image loads of the current shelf, in order; null once started (or no image). */
+    private val cardLoads = ArrayList<(() -> Unit)?>()
+
+    private fun loadCardsThrough(last: Int) {
+        for (i in 0..minOf(last, cardLoads.lastIndex)) {
+            val load = cardLoads[i] ?: continue
+            cardLoads[i] = null
+            load()
+        }
     }
 
     /** Slide the row the least amount that puts [card] fully inside the side margins. */
@@ -881,6 +1014,9 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
     }
 
     override fun focusShelf(): Boolean {
+        // Up before the focused app's shelf loaded: load it now; the cards still showing belong to
+        // the previously focused app, so Up goes to the status strip instead.
+        if (artPending != null) { main.removeCallbacks(showPendingArt); showPendingArt.run(); return false }
         if (recoRow.childCount == 0 || recoBox.alpha < 0.5f) return false
         shelfDockIndex = (adapter.dockGlass?.findFocus()?.let { f ->
             (0 until adapter.dockSize).firstOrNull { adapter.dockTile(it) === f }
@@ -963,7 +1099,6 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         val art = artCache.get(entry.packageName) ?: Artwork.render(entry).also { artCache.put(entry.packageName, it) }
 
         crossfadeBackdrop(art.backdrop)
-
         title.animate().cancel()
         title.animate().alpha(0f).setDuration(FADE_MS / 2).withEndAction {
             title.text = entry.label
@@ -1005,10 +1140,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         underHidden = v != View.VISIBLE
         // Restore only what was showing; fully faded layers stay GONE.
         fun set(view: View) { view.visibility = if (v == View.VISIBLE && view.alpha <= 0f) View.GONE else v }
-        set(backA); set(backB); shade.visibility = v
-        // Hidden, the TextureView stops drawing new frames (its SurfaceTexture and player survive;
-        // the player pauses after VIDEO_PAUSE_DELAY_MS).
-        if (videoPath != null) videoView.visibility = v
+        set(backB); shade.visibility = v
+        // A fully covered by B (see crossfadeBackdrop) stays hidden.
+        if (v == View.VISIBLE && !frontIsA && backB.alpha >= 1f && backB.visibility == View.VISIBLE) backA.visibility = View.GONE else set(backA)
+        // Video: never hidden (that destroys the surface and the decoder; recreating them on every
+        // trip into the grid is what the TV can least afford). Moved off-screen, the compositor skips
+        // it; the player pauses after VIDEO_PAUSE_DELAY_MS.
+        if (v == View.VISIBLE) placeVideo() else videoView.translationX = screenW * 2f
     }
 
     /** tvOS: after a few idle minutes on Home, the aerial screen saver starts (Settings → Screen Saver). */
@@ -1066,6 +1204,10 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         const val FADE_MS = 300L
         /** Focus must rest on a Top Shelf card this long before its full-screen art loads. */
         const val CARD_SETTLE_MS = 180L
+        /** Focus must rest on a dock app this long before its Top Shelf (cards, backdrop) loads. */
+        const val SHELF_SETTLE_MS = 300L
+        /** Shelf cards whose art is loaded ahead of the focused card. */
+        const val CARDS_AHEAD = 2
         /** Top Shelf carousel geometry, measured from tvOS 26 (fractions of screen height/width). */
         const val SHELF_TOP = 0.13f
         const val CARD_H = 0.42f
@@ -1075,6 +1217,25 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         const val GRID_DIM = 0.15f
         /** A hidden video wallpaper is paused only after staying hidden this long (see updateVideoPlayback). */
         const val VIDEO_PAUSE_DELAY_MS = 3000L
+        /** The video wallpaper's decoder starts this long after Home shows, once idle (see requestPlayer). */
+        const val VIDEO_START_DELAY_MS = 1000L
+        /** Cold start: the package-manager refresh waits this long, then for idle (see reload). */
+        const val REFRESH_DELAY_MS = 3000L
+        /** Package broadcasts reload Home once none arrived for this long (see packageReceiver). */
+        const val PACKAGE_SETTLE_MS = 1500L
+        /** Held D-pad: minimum spacing of repeated focus moves (see dropRepeat). */
+        const val REPEAT_MOVE_MS = 90L
+        /** Back on Home: other apps' caches are freed this long after (see freeMemory). */
+        const val FREE_MEMORY_DELAY_MS = 3000L
+        /** A new shelf's cards show by now even if its first image (and so its background) hasn't come. */
+        const val REVEAL_TIMEOUT_MS = 900L
+        /** Dock <-> grid frost fade (see setGridMode). */
+        const val FROST_FADE_MS = 200L
+        /** Loading pulse: placeholder alphas, one step every [PULSE_STEP_MS] (~5 fps, ~1.1 s a cycle). */
+        val PULSE_ALPHAS = intArrayOf(0x1A, 0x22, 0x2C, 0x36, 0x2C, 0x22)
+        const val PULSE_STEP_MS = 180L
+        /** Card placeholder colour (and the rest colour of its loading pulse). */
+        const val CARD_PLACEHOLDER = 0x26FFFFFF
         val SCROLL_EASE = DecelerateInterpolator(2f)
     }
 }

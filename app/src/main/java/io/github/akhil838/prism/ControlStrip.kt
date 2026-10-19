@@ -163,7 +163,7 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
                 (disc.background as GradientDrawable).setColor(if (has) Color.WHITE else 0x4D1C1C1F)
                 if (img.drawable != null && !(i == circles.size - 1 && avatar != null)) img.setColorFilter(if (has) 0xFF1C1C1E.toInt() else Color.WHITE, PorterDuff.Mode.SRC_IN)
                 disc.animate().scaleX(if (has) 1.18f else 1f).scaleY(if (has) 1.18f else 1f)
-                    .translationZ(if (has) 16 * pt else 0f).setDuration(180).start()
+                    .setDuration(180).start()
                 if (has && i != 0) hidePanel()
             }
             setOnClickListener { onClick() }
@@ -290,7 +290,7 @@ class ControlStrip(context: Context, private val dims: Dims, private val actions
                 titleView.setTextColor(if (has) 0xFF1C1C1E.toInt() else Color.WHITE)
                 sub?.setTextColor(if (has) 0xFF48484A.toInt() else 0xB3FFFFFF.toInt())
                 whenView?.setTextColor(if (has) 0xFF6E6A75.toInt() else 0x99FFFFFF.toInt())
-                v.animate().scaleX(if (has) 1.03f else 1f).scaleY(if (has) 1.03f else 1f).translationZ(if (has) 10 * pt else 0f).setDuration(150).start()
+                v.animate().scaleX(if (has) 1.03f else 1f).scaleY(if (has) 1.03f else 1f).setDuration(150).start()
             }
             setOnClickListener { onClick() }
             setOnKeyListener { _, k, e ->

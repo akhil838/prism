@@ -201,7 +201,7 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
     }
 
     private fun drawRefracted(canvas: Canvas) {
-        if (verts.isEmpty()) return
+        if (verts.isEmpty() || !Diag.glass) return
         // Forget shaders for bitmaps no source shows any more.
         if (layerPaints.size > sources.size) {
             val live = sources.mapNotNullTo(HashSet()) { (it.drawable as? BitmapDrawable)?.bitmap }
@@ -237,7 +237,27 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
     private val glassNode = android.graphics.RenderNode("glass").apply { setUseCompositingLayer(true, null) }
     private var glassDirty = true
 
+    /**
+     * The glass layer is frozen while things move under it: a change on its own redraws at once, but
+     * during a stream of changes (scrolling into the grid, backdrop / frost fades: one per frame) it
+     * keeps its last image and redraws once, [SETTLE_MS] after the last one, refraction included.
+     * Redrawing it every frame was an extra off-screen pass per frame (and the mesh, thousands of
+     * triangles per source) on top of the busiest frames; on the TCL every frame of those
+     * transitions already took the GPU 30-120 ms.
+     */
+    private var moving = false
+    private var lastInvalidate = 0L
+    private val settle = Runnable { moving = false; redraw() }
+
     override fun invalidate() {
+        val now = android.os.SystemClock.uptimeMillis()
+        moving = now - lastInvalidate < SETTLE_MS
+        lastInvalidate = now
+        removeCallbacks(settle)
+        if (moving) postDelayed(settle, SETTLE_MS) else redraw()
+    }
+
+    private fun redraw() {
         glassDirty = true
         super.invalidate()
     }
@@ -263,7 +283,8 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
         canvas.save()
         canvas.clipPath(clip)
 
-        drawRefracted(canvas)
+        val r = perf.refraction
+        if (Diag.glass && r != Perf.Refraction.OFF && !(r == Perf.Refraction.AT_REST && moving)) drawRefracted(canvas)
         overlay?.let {
             canvas.save()
             canvas.translate(-location[0].toFloat(), -location[1].toFloat())
@@ -298,6 +319,9 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
         canvas.drawRoundRect(i2, i2, width - i2, height - i2, radius - i2, radius - i2, innerPaint)
     }
 }
+
+/** Quiet time after the glass's last change before its refraction mesh is drawn again. */
+private const val SETTLE_MS = 150L
 
 /** User-tunable glass look, 0..100 each. Default matches a clear tvOS 26 dock over artwork. */
 data class GlassStyle(val blur: Int = 0, val dim: Int = 20, val gloss: Int = 50, val refraction: Int = 50)

@@ -79,13 +79,23 @@ object Wallpaper {
         return old.size
     }
 
-    /** A frame ~1 s in, scaled to about [w]x[h]; used as poster, settings preview and glass frost. */
+    /**
+     * A frame ~1 s in, scaled to about [w]x[h]; used as poster, settings preview and glass frost.
+     * RGB_565 (video frames are opaque): half the memory and GPU texture of the ARGB_8888 default.
+     */
     fun poster(path: String, w: Int, h: Int): Bitmap? = runCatching {
         MediaMetadataRetriever().use { r ->
             r.setDataSource(path)
-            r.getScaledFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, w, h)
+            r.getScaledFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, w, h,
+                MediaMetadataRetriever.BitmapParams().apply { preferredConfig = Bitmap.Config.RGB_565 })
         }
     }.getOrNull()
+
+    /** Identity of the current wallpaper ([video] = [videoPath]): Home re-decodes only when it changes. */
+    fun key(ctx: Context, video: String?): String =
+        video?.let { "video:$it" }
+            ?: file(ctx).takeIf { it.exists() }?.let { "photo:${it.lastModified()}:${it.length()}" }
+            ?: "none"
 
     /** Labels use the short side, so portrait 1080×1920 reads as 1080p. Human-readable details: resolution, format, size, and duration/bitrate for videos. */
     fun describe(f: File): String {

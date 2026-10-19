@@ -234,7 +234,7 @@ class ChooseAerialsActivity : Activity() {
             addView(frame, LinearLayout.LayoutParams(w, h))
             addView(name, LinearLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
             setOnFocusChangeListener { v, has ->
-                frame.animate().scaleX(if (has) 1.08f else 1f).scaleY(if (has) 1.08f else 1f).translationZ(if (has) 18 * pt else 0f).setDuration(180).start()
+                frame.animate().scaleX(if (has) 1.08f else 1f).scaleY(if (has) 1.08f else 1f).setDuration(180).start()
                 name.animate().translationY(if (has) h * 0.04f else 0f).setDuration(180).start()
                 if (has) scroll.post { scroll.smoothScrollTo(0, if (i < 3) 0 else (v.top - (90 * pt).toInt()).coerceAtLeast(0)) }
             }

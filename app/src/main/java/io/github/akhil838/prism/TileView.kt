@@ -48,7 +48,14 @@ class Dims(screenW: Int, screenH: Int) {
     val gridFocusTop = (screenH * 0.333f).toInt() // focused grid row top at 297/892
 }
 
-/** Rounded app tile: rises to ~1.21x with a dark halo shadow and a lit top surface (tvOS 26). */
+/**
+ * Rounded app tile: rises to ~1.21x with a soft halo in its own colour and a lit top surface (tvOS 26).
+ *
+ * The halo is a pre-rendered bitmap ([Halo]) drawn by the cell behind the tile, not an elevation
+ * shadow: on the TCL (Mali-470, GLES 2) the renderer ran out of GPU memory and crashed within
+ * seconds of fast scrolling through the grid while several tiles were rising / settling with
+ * translationZ at once (measured: shadows on 4-6 crashes per 15 scroll cycles, off 0 in 40).
+ */
 class TileView(context: Context, private val dims: Dims) : FrameLayout(context) {
 
     private val image = ImageView(context)
@@ -74,19 +81,20 @@ class TileView(context: Context, private val dims: Dims) : FrameLayout(context) 
             }
         }
         clipToOutline = true
-        // No resting shadow: 30+ tile shadows per frame were too much for TV GPUs; the focused /
-        // moving tile still lifts with translationZ (tvOS shows the halo only on that one).
     }
+
+    /** The cell's halo, animated with this tile ([CellView] owns and places it). */
+    var halo: View? = null
+
+    /** The tile's own colour (banner average, or the icon plate), for the halo. */
+    var glow = Color.BLACK
+        private set
 
     fun bind(entry: AppEntry) {
         contentDescription = entry.label
         // tvOS: the focused tile's shadow glows in the tile's own colour (blue App Store, dark Apple TV).
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
-            val glow = glowCache.getOrPut(entry.packageName) {
-                entry.banner?.let { Artwork.bannerColor(it) } ?: Artwork.plateColor(entry.icon)
-            }
-            outlineSpotShadowColor = glow
-            outlineAmbientShadowColor = glow
+        glow = glowCache.getOrPut(entry.packageName) {
+            entry.banner?.let { Artwork.bannerColor(it) } ?: Artwork.plateColor(entry.icon)
         }
         val banner = entry.banner
         if (banner != null) {
@@ -109,9 +117,9 @@ class TileView(context: Context, private val dims: Dims) : FrameLayout(context) 
     fun setMoving(on: Boolean) {
         wiggle?.cancel(); wiggle = null
         if (on) {
-            animate().cancel()
             animate().scaleX(dims.focusScale * 1.1f).scaleY(dims.focusScale * 1.1f)
-                .translationZ(56 * dims.pt).setDuration(200).setInterpolator(SETTLE).start()
+                .setDuration(200).setInterpolator(SETTLE).start()
+            lift(dims.focusScale * 1.1f, 1f, 200, SETTLE)
             lit.alpha = 1f
             wiggle = android.animation.ObjectAnimator.ofFloat(this, View.ROTATION, -1.4f, 1.4f).apply {
                 duration = 150
@@ -135,14 +143,25 @@ class TileView(context: Context, private val dims: Dims) : FrameLayout(context) 
         lit.animate().cancel()
         if (focused) {
             animate().scaleX(dims.focusScale).scaleY(dims.focusScale)
-                .translationZ(36 * dims.pt)          // large, dark halo shadow
                 .setDuration(240).setInterpolator(RISE).start()
+            lift(dims.focusScale, 1f, 240, RISE)
             lit.animate().alpha(1f).setDuration(240).start()
         } else {
-            animate().scaleX(1f).scaleY(1f).translationZ(0f)
+            animate().scaleX(1f).scaleY(1f)
                 .setDuration(200).setInterpolator(SETTLE).start()
+            lift(1f, 0f, 160, SETTLE)
             lit.animate().alpha(0f).setDuration(160).start()
         }
+    }
+
+    /** Halo follows the tile's scale and fades in / out (never shown with [Perf.glow] or [Diag.shadows] off). */
+    private fun lift(scale: Float, alpha: Float, ms: Long, ease: android.animation.TimeInterpolator) {
+        val h = halo ?: return
+        h.animate().cancel()
+        val a = if (Diag.shadows && perf.glow) alpha else 0f
+        if (a > 0f) h.visibility = VISIBLE
+        h.animate().scaleX(scale).scaleY(scale).alpha(a).setDuration(ms).setInterpolator(ease)
+            .withEndAction { if (h.alpha == 0f) h.visibility = INVISIBLE }.start()
     }
 
     companion object {
@@ -162,6 +181,13 @@ class TileView(context: Context, private val dims: Dims) : FrameLayout(context) 
 class CellView(context: Context, dims: Dims, private val showName: Boolean) : FrameLayout(context) {
     val tile = TileView(context, dims)
     private val pt = dims.pt
+    /** Soft glow behind the focused tile: one shared tiny bitmap, scaled up; alpha fades need no layer. */
+    private val halo = ImageView(context).apply {
+        setImageBitmap(Halo.bitmap(dims))
+        scaleType = ImageView.ScaleType.FIT_XY
+        alpha = 0f
+        visibility = INVISIBLE
+    }
     private val label = TextView(context).apply {
         setTextColor(Color.WHITE)
         setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 29 * pt)
@@ -175,6 +201,11 @@ class CellView(context: Context, dims: Dims, private val showName: Boolean) : Fr
     init {
         clipChildren = false
         clipToPadding = false
+        val m = Halo.margin(dims)
+        addView(halo, LayoutParams(dims.tileW + 2 * m, dims.tileH + 2 * m, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+            topMargin = -m + Halo.drop(dims)
+        })
+        tile.halo = halo
         addView(tile, LayoutParams(dims.tileW, dims.tileH, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         if (showName) {
             addView(label, LayoutParams(dims.cellW, dims.labelH, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
@@ -186,10 +217,47 @@ class CellView(context: Context, dims: Dims, private val showName: Boolean) : Fr
     fun bind(entry: AppEntry) {
         tile.bind(entry)
         label.text = entry.label
+        halo.setColorFilter(Halo.tint(tile.glow), android.graphics.PorterDuff.Mode.SRC_IN)
     }
 
     fun setFocusedLook(focused: Boolean) {
         tile.setFocusedLook(focused)
         if (showName) label.animate().alpha(if (focused) 1f else 0f).setDuration(200).start()
     }
+}
+
+/**
+ * The focus halo: a white rounded rectangle blurred once at quarter size (a few KB), shared by every
+ * cell and tinted per app with a colour filter. Scaled up with filtering it reads as a soft glow;
+ * no per-frame shadow geometry, no off-screen layers.
+ */
+object Halo {
+    private const val SCALE = 4
+    private var cached: android.graphics.Bitmap? = null
+    private var cachedFor = 0
+
+    /** How far the glow extends past the tile on each side. */
+    fun margin(dims: Dims) = (30 * dims.pt).toInt()
+
+    /** The glow sits a little lower than the tile, like light from above. */
+    fun drop(dims: Dims) = (10 * dims.pt).toInt()
+
+    fun bitmap(dims: Dims): android.graphics.Bitmap {
+        cached?.takeIf { cachedFor == dims.tileW }?.let { return it }
+        val m = margin(dims)
+        val w = (dims.tileW + 2 * m) / SCALE
+        val h = (dims.tileH + 2 * m) / SCALE
+        val inset = m / SCALE.toFloat()
+        val shape = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(shape).drawRoundRect(inset, inset, w - inset, h - inset,
+            dims.radius / SCALE, dims.radius / SCALE, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
+        val out = Artwork.blur(shape, radius = (inset / 2).toInt().coerceAtLeast(1))
+        shape.recycle()
+        cached = out; cachedFor = dims.tileW
+        return out
+    }
+
+    /** The halo colour for a tile of colour [glow]: darker, mostly opaque (tvOS's dark coloured halo). */
+    fun tint(glow: Int): Int = Color.argb(0xD0,
+        (Color.red(glow) * 0.55f).toInt(), (Color.green(glow) * 0.55f).toInt(), (Color.blue(glow) * 0.55f).toInt())
 }

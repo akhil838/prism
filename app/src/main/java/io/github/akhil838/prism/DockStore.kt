@@ -79,6 +79,26 @@ class DockStore(context: Context) {
         prefs.edit().putInt(KEY_BLUR, g.blur).putInt(KEY_DIM, g.dim).putInt(KEY_GLOSS, g.gloss).putInt(KEY_REFRACTION, g.refraction).apply()
     }
 
+    // ---- performance (Settings → Performance) ----
+    fun perfPreset(): Perf.Preset =
+        runCatching { Perf.Preset.valueOf(prefs.getString("perf_preset", null) ?: "MEDIUM") }.getOrDefault(Perf.Preset.MEDIUM)
+
+    /** The effective settings: the preset's, or the Custom values. */
+    fun perf(): Perf = Perf.of(perfPreset()) ?: Perf(
+        video = prefs.getBoolean("perf_video", Perf.MEDIUM.video),
+        refraction = runCatching { Perf.Refraction.valueOf(prefs.getString("perf_refraction", null)!!) }.getOrDefault(Perf.MEDIUM.refraction),
+        glow = prefs.getBoolean("perf_glow", Perf.MEDIUM.glow),
+    )
+
+    fun setPerfPreset(p: Perf.Preset) { prefs.edit().putString("perf_preset", p.name).apply(); bump() }
+
+    /** Switches to Custom with [p] as its values. */
+    fun setPerfCustom(p: Perf) {
+        prefs.edit().putString("perf_preset", Perf.Preset.CUSTOM.name).putBoolean("perf_video", p.video)
+            .putString("perf_refraction", p.refraction.name).putBoolean("perf_glow", p.glow).apply()
+        bump()
+    }
+
     companion object {
         private const val KEY_GRID = "grid_order"
         private const val KEY_RECO = "show_reco"

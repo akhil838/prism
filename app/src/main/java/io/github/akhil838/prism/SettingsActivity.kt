@@ -71,8 +71,8 @@ class SettingsActivity : Activity() {
     private lateinit var titleView: TextView
     private lateinit var heroView: ImageView
     private lateinit var infoView: TextView
-    /** Decoded wallpaper previews (photo or video frame) by path + mtime; decoding is not free. */
-    private val previewCache = HashMap<String, Drawable?>()
+    /** Decoded wallpaper previews (photo or video frame) by path + mtime; decoding is not free. Bounded: see [lru]. */
+    private val previewCache = lru<Drawable?>(6)
     private val picsumInfo = HashMap<Int, String>()
     private lateinit var list: LinearLayout
     private lateinit var scroll: ScrollView
@@ -89,6 +89,7 @@ class SettingsActivity : Activity() {
         }
         store = DockStore(this)
         glassStyle = store.glass()
+        perf = store.perf()
         val m = resources.displayMetrics
         dims = Dims(maxOf(m.widthPixels, m.heightPixels), minOf(m.widthPixels, m.heightPixels))
         setContentView(buildLayout())
@@ -332,7 +333,7 @@ class SettingsActivity : Activity() {
             chevron.setTextColor(if (has) 0xFF6E6A75.toInt() else SECONDARY)
             (icon as? DownloadBadge)?.focused = has
             v.animate().scaleX(if (has) 1.015f else 1f).scaleY(if (has) 1.04f else 1f)
-                .translationZ(if (has) 14 * pt else 0f).setDuration(150).start()
+                .setDuration(150).start()
             if (has) { setHero(row.hero?.invoke() ?: page.hero()); setInfo(row.info?.invoke()) }
         }
         cell.setOnClickListener {
@@ -395,20 +396,81 @@ class SettingsActivity : Activity() {
         },
     )
 
+    /**
+     * Appearance: the quality preset (one field: Low / Medium / High / Custom) and the three effects it
+     * sets, then the glass look. Changing an effect by hand switches the preset to Custom.
+     */
     private fun appearancePage() = Page(
         title = getString(R.string.appearance),
         hero = ::appIcon,
         rows = {
             val g = glassStyle
+            fun custom(p: Perf) { store.setPerfCustom(p); perf = p; refresh() }
             listOf(
+                Row(getString(R.string.perf_quality), value = { presetName(store.perfPreset()) },
+                    info = { getString(R.string.perf_quality_info) }, chevron = true) { push(qualityPage()) },
+                Row(getString(R.string.perf_video), value = { getString(if (perf.video) R.string.on else R.string.off) },
+                    info = { getString(R.string.perf_video_info) }) { custom(perf.copy(video = !perf.video)) },
+                Row(getString(R.string.perf_refraction), value = { refractionName(perf.refraction) },
+                    info = { getString(R.string.perf_refraction_info) }, chevron = true) { push(refractionPage()) },
+                Row(getString(R.string.perf_glow), value = { getString(if (perf.glow) R.string.on else R.string.off) },
+                    info = { getString(R.string.perf_glow_info) }) { custom(perf.copy(glow = !perf.glow)) },
                 Row(getString(R.string.glass_blur), value = { levelName(glassStyle.blur) }, chevron = true) { push(levelPage(R.string.glass_blur, g.blur) { glassStyle.copy(blur = it) }) },
                 Row(getString(R.string.glass_dim), value = { levelName(glassStyle.dim) }, chevron = true) { push(levelPage(R.string.glass_dim, g.dim) { glassStyle.copy(dim = it) }) },
                 Row(getString(R.string.glass_gloss), value = { levelName(glassStyle.gloss) }, chevron = true) { push(levelPage(R.string.glass_gloss, g.gloss) { glassStyle.copy(gloss = it) }) },
                 Row(getString(R.string.glass_refraction), value = { levelName(glassStyle.refraction) }, chevron = true) { push(levelPage(R.string.glass_refraction, g.refraction) { glassStyle.copy(refraction = it) }) },
                 Row(getString(R.string.reset_default)) {
-                    glassStyle = GlassStyle(); store.setGlass(glassStyle); refresh()
+                    glassStyle = GlassStyle(); store.setGlass(glassStyle)
+                    store.setPerfPreset(Perf.Preset.MEDIUM); perf = store.perf(); refresh()
                 },
             )
+        },
+    )
+
+    private fun presetName(p: Perf.Preset) = getString(when (p) {
+        Perf.Preset.LOW -> R.string.perf_low
+        Perf.Preset.MEDIUM -> R.string.perf_medium
+        Perf.Preset.HIGH -> R.string.perf_high
+        Perf.Preset.CUSTOM -> R.string.perf_custom
+    })
+
+    private fun refractionName(r: Perf.Refraction) = getString(when (r) {
+        Perf.Refraction.ALWAYS -> R.string.perf_refraction_always
+        Perf.Refraction.AT_REST -> R.string.perf_refraction_at_rest
+        Perf.Refraction.OFF -> R.string.off
+    })
+
+    /** Appearance → Quality: one choice. Custom keeps the current effects and lets them be changed by hand. */
+    private fun qualityPage() = Page(
+        title = getString(R.string.perf_quality),
+        hero = ::appIcon,
+        note = getString(R.string.perf_quality_note),
+        rows = {
+            listOf(
+                Perf.Preset.LOW to R.string.perf_low_info,
+                Perf.Preset.MEDIUM to R.string.perf_medium_info,
+                Perf.Preset.HIGH to R.string.perf_high_info,
+                Perf.Preset.CUSTOM to R.string.perf_custom_info,
+            ).map { (p, info) ->
+                Row(presetName(p), value = { if (store.perfPreset() == p) "✓" else null }, info = { getString(info) }) {
+                    if (p == Perf.Preset.CUSTOM) store.setPerfCustom(perf) else store.setPerfPreset(p)
+                    perf = store.perf(); pop()
+                }
+            }
+        },
+    )
+
+    /** Appearance → Glass Refraction: Always / At Rest / Off (switches the quality to Custom). */
+    private fun refractionPage() = Page(
+        title = getString(R.string.perf_refraction),
+        hero = ::appIcon,
+        note = getString(R.string.perf_refraction_info),
+        rows = {
+            Perf.Refraction.values().map { r ->
+                Row(refractionName(r), value = { if (perf.refraction == r) "✓" else null }) {
+                    perf = perf.copy(refraction = r); store.setPerfCustom(perf); pop()
+                }
+            }
         },
     )
 
@@ -449,7 +511,7 @@ class SettingsActivity : Activity() {
     // ---- screen saver & Apple aerials ------------------------------------------------------
 
     private var aerialFeed: Aerials.Feed? = null
-    private val aerialPreviews = HashMap<String, Drawable>()
+    private val aerialPreviews = lru<Drawable>(8)
     private val aerialPlaceholders = HashMap<String, Drawable>()
     private val downloading = HashSet<String>()
 
@@ -730,7 +792,7 @@ class SettingsActivity : Activity() {
                     }
                     clipToOutline = true
                     setOnFocusChangeListener { v, has ->
-                        v.animate().scaleX(if (has) 1.1f else 1f).scaleY(if (has) 1.1f else 1f).translationZ(if (has) 16 * pt else 0f).setDuration(150).start()
+                        v.animate().scaleX(if (has) 1.1f else 1f).scaleY(if (has) 1.1f else 1f).setDuration(150).start()
                         if (has) {
                             (drawable as? BitmapDrawable)?.let { setHero(it) }
                             showPicsumInfo(id, v)
@@ -820,7 +882,7 @@ class SettingsActivity : Activity() {
                     background = bg
                     setOnFocusChangeListener { v, has ->
                         bg.setColor(if (has) Color.WHITE else UNFOCUSED)
-                        v.animate().scaleX(if (has) 1.15f else 1f).scaleY(if (has) 1.15f else 1f).translationZ(if (has) 12 * pt else 0f).setDuration(150).start()
+                        v.animate().scaleX(if (has) 1.15f else 1f).scaleY(if (has) 1.15f else 1f).setDuration(150).start()
                         if (has) (drawable as? BitmapDrawable)?.let { setHero(it) }
                     }
                 }
@@ -953,6 +1015,11 @@ class SettingsActivity : Activity() {
         /** Darkens the frost a little so white text stays legible over bright wallpapers. */
         private const val SCRIM = 0x40000000
     }
+}
+
+/** Most-recently-used map keeping [max] entries: preview bitmaps (~0.5-1 MB each) stay bounded while browsing. */
+private fun <V> lru(max: Int): MutableMap<String, V> = object : LinkedHashMap<String, V>(16, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>?) = size > max
 }
 
 /** versionName without a BuildConfig dependency. */

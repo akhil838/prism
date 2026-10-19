@@ -7,7 +7,7 @@
     <string name="glass_blur">Blur</string>
     <string name="glass_dim">Dim</string>
     <string name="glass_gloss">Gloss</string>
-    <string name="glass_refraction">Refraction</string>
+    <string name="glass_refraction">Refraction Strength</string>
     <string-array name="glass_levels">
         <item>Off</item>
         <item>Low</item>
@@ -132,6 +132,26 @@
     <string name="top_shelf">Top Shelf</string>
     <string name="top_shelf_note">When you rest on an app in the dock, show that app\'s channel previews (its recommended movies and shows) with artwork, and let you open them directly.</string>
     <string name="show_previews">Show Channel Previews</string>
+
+    <string name="perf_quality">Quality</string>
+    <string name="perf_quality_info">Sets the effects below. Lower if Home stutters or restarts while you scroll.</string>
+    <string name="perf_quality_note">The video wallpaper, glass refraction and focus glow cost the most graphics work. If Home stutters or restarts while you scroll, choose a lower quality.</string>
+    <string name="perf_refraction">Refraction</string>
+    <string name="perf_low">Low</string>
+    <string name="perf_medium">Medium</string>
+    <string name="perf_high">High</string>
+    <string name="perf_custom">Custom</string>
+    <string name="perf_low_info">Still wallpaper, plain dock glass, no focus glow. Lightest on the TV.</string>
+    <string name="perf_medium_info">Video wallpaper and focus glow; the glass bends the backdrop only while nothing moves. Recommended.</string>
+    <string name="perf_high_info">Every effect at full quality, also while scrolling.</string>
+    <string name="perf_custom_info">Keep the current effects and change them one by one in Appearance.</string>
+    <string name="perf_video">Video Wallpaper</string>
+    <string name="perf_video_info">Play video wallpapers. Off: their still picture is shown instead.</string>
+    <string name="perf_refraction_info">How the dock glass bends the backdrop: always, only while nothing moves, or never.</string>
+    <string name="perf_refraction_always">Always</string>
+    <string name="perf_refraction_at_rest">At Rest</string>
+    <string name="perf_glow">Focus Glow</string>
+    <string name="perf_glow_info">Soft coloured glow behind the focused app.</string>
     <string name="allow_previews">Allow Access to Previews</string>
 
     <color name="backdrop">#FF0B0F14</color>
