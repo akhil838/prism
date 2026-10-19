@@ -551,7 +551,6 @@ class SettingsActivity : Activity() {
                 }, chevron = true) { startActivity(Intent(this, ChooseAerialsActivity::class.java)) },
                 Row(getString(R.string.saver_frequency), value = { frequencyLabel(store.saverDownloadDays()) },
                     info = { getString(R.string.saver_cached, Aerials.cachedCount(this)) }, chevron = true) { push(saverFrequencyPage()) },
-                Row(getString(R.string.saver_quality), value = { store.saverQuality().label }, chevron = true) { push(saverQualityPage()) },
                 Row(getString(R.string.saver_captions), value = { getString(if (store.saverCaptions()) R.string.on else R.string.off) }) {
                     store.setSaverCaptions(!store.saverCaptions()); refresh()
                 },
@@ -572,19 +571,6 @@ class SettingsActivity : Activity() {
                     if (d > 0) { store.setSaverLastDownload(0); Aerials.refreshCache(this) } // first download now
                     pop()
                 }
-            }
-        },
-    )
-
-    private fun saverQualityPage() = Page(
-        title = getString(R.string.saver_quality),
-        hero = { aerialHero(null) },
-        rows = {
-            val hevc = Aerials.hasHevc()
-            Aerials.Quality.entries.filter { hevc || it == Aerials.Quality.H264_1080 }.map { q ->
-                Row(q.label, value = { if (store.saverQuality() == q) "✓" else null }, info = {
-                    getString(when (q) { Aerials.Quality.H264_1080 -> R.string.quality_h264; Aerials.Quality.HEVC_1080 -> R.string.quality_hevc; Aerials.Quality.HEVC_4K -> R.string.quality_4k })
-                }) { store.setSaverQuality(q); pop() }
             }
         },
     )
@@ -639,9 +625,8 @@ class SettingsActivity : Activity() {
         DownloadBadge().apply { state = if (Aerials.localFile(this@SettingsActivity, a) != null) DownloadBadge.State.LOCAL else DownloadBadge.State.REMOTE }
     }
 
-    /** Named by codec: an HEVC file a TV can't play is never mistaken for its H.264 version. */
-    private fun aerialFile(a: Aerials.Aerial, q: Aerials.Quality) = Wallpaper.localDir(this)?.let {
-        java.io.File(it, "Aerial - ${a.title.replace('/', '-')} (${q.label}).mov")
+    private fun aerialFile(a: Aerials.Aerial) = Wallpaper.localDir(this)?.let {
+        java.io.File(it, "Aerial - ${a.title.replace('/', '-')} (1080p H.264).mov")
     }
 
     /** One category's aerials; picking one downloads it once (1080p) and makes it the video wallpaper. */
@@ -651,9 +636,8 @@ class SettingsActivity : Activity() {
             title = c.name,
             hero = { aerialHero(c.id) },
             rows = {
-                val q = Aerials.Quality.best1080()
                 feed.inCategory(c.id).sortedBy { it.title }.map { a ->
-                    val f = aerialFile(a, q)
+                    val f = aerialFile(a)
                     Row(a.title,
                         value = { if (f != null && f.path == Wallpaper.videoPath(this)) "✓" else null },
                         icon = { badgeFor(a) },
@@ -663,7 +647,7 @@ class SettingsActivity : Activity() {
                         f ?: return@Row
                         if (f.exists()) { Wallpaper.saveFrom(this, f); wallpaperChanged(); refresh(); return@Row }
                         if (!downloading.add(a.id)) return@Row
-                        val url = a.url(q) ?: return@Row
+                        val url = a.url() ?: return@Row
                         downloadPct[a.id] = 0
                         setInfo(getString(R.string.aerial_download, 0))
                         badgeFor(a).state = DownloadBadge.State.LOADING

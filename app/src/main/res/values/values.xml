@@ -61,10 +61,6 @@
     <string name="saver_start_after">Start After</string>
     <string name="saver_never">Never</string>
     <string name="saver_minutes">%d minutes</string>
-    <string name="saver_quality">Video Quality</string>
-    <string name="quality_h264">Works on every TV. Largest stream.</string>
-    <string name="quality_hevc">Same picture, about 40% less data. Needs HEVC (most TVs since 2016).</string>
-    <string name="quality_4k">For 4K TVs on a fast connection.</string>
     <string name="saver_captions">Show Locations</string>
     <string name="saver_system">Use with Other Apps</string>
     <string name="saver_system_info">Opens the TV\'s screen saver settings: choose Prism Aerials.</string>

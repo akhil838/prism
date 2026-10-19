@@ -100,10 +100,9 @@ class AerialView(context: Context) : FrameLayout(context) {
             if (feed == null) { status.text = context.getString(R.string.saver_offline); return@load }
             val hidden = store.saverHidden()
             val visible = feed.aerials.filter { it.id !in hidden }.ifEmpty { feed.aerials }
-            val quality = store.saverQuality()
             // Downloading enabled and something is on disk: play only those (no buffering), like tvOS.
             val cached = if (store.saverDownloadDays() > 0) visible.mapNotNull { a -> Aerials.cachedFile(context, a)?.let { Clip(a, it.path) } } else emptyList()
-            items = cached.ifEmpty { visible.mapNotNull { a -> a.url(quality)?.let { Clip(a, it) } } }
+            items = cached.ifEmpty { visible.mapNotNull { a -> a.url()?.let { Clip(a, it) } } }
             status.text = ""
             next()
         }
@@ -192,9 +191,6 @@ class AerialView(context: Context) : FrameLayout(context) {
             setOnInfoListener { _, what, extra -> Log.d(TAG, "info $what/$extra"); false }
             setOnErrorListener { _, what, extra ->
                 Log.w(TAG, "$source: error $what/$extra")
-                // HEVC that this TV can't decode: same clip again as H.264.
-                val h264 = clip?.aerial?.h264()
-                if (clip != null && h264 != null && source != h264) { main.post { play(h264, clip) }; return@setOnErrorListener true }
                 if (++failures >= 3) { status.text = context.getString(R.string.saver_offline); running = false }
                 else main.post { next() }
                 true

@@ -57,8 +57,6 @@ class DockStore(context: Context) {
     fun setSlideSeconds(s: Int) = prefs.edit().putInt("slide_seconds", s).apply()
     fun slideShuffle(): Boolean = prefs.getBoolean("slide_shuffle", true)
     fun setSlideShuffle(on: Boolean) = prefs.edit().putBoolean("slide_shuffle", on).apply()
-    fun saverQuality(): Aerials.Quality = Aerials.Quality.of(prefs.getString("saver_quality", null)) ?: Aerials.Quality.H264_1080
-    fun setSaverQuality(q: Aerials.Quality) = prefs.edit().putString("saver_quality", q.name).apply()
     fun saverCaptions(): Boolean = prefs.getBoolean("saver_captions", true)
     fun setSaverCaptions(on: Boolean) = prefs.edit().putBoolean("saver_captions", on).apply()
 

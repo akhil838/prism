@@ -1,7 +1,6 @@
 package io.github.akhil838.prism
 
 import android.content.Context
-import android.media.MediaCodecList
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -37,41 +36,17 @@ object Aerials {
         /** Unique display name (Apple labels many clips just "China", "Yosemite"…); set by [parse]. */
         var title: String = name
             internal set
-        fun url(q: Quality): String? = urls[q.key] ?: urls[Quality.H264_1080.key]
-        /** H.264 version, the fallback when an HEVC clip won't decode. */
-        fun h264(): String? = urls[Quality.H264_1080.key]
+        /**
+         * Apple's 1080p H.264 (8-bit, ~6 Mbps). Their HEVC versions are all 10-bit: TVs whose decoder
+         * accepts them still show solid green through a TextureView (seen on the TCL), so they're not used.
+         */
+        fun url(): String? = urls["url-1080-H264"]
         fun captionAt(sec: Int): String? = captions.lastOrNull { it.first <= sec }?.second
     }
 
     class Feed(val categories: List<Category>, val aerials: List<Aerial>) {
         fun inCategory(id: String) = aerials.filter { it.categoryId == id }
         fun category(id: String?) = categories.firstOrNull { it.id == id }
-    }
-
-    enum class Quality(val key: String, val label: String) {
-        H264_1080("url-1080-H264", "1080p H.264"),
-        HEVC_1080("url-1080-SDR", "1080p HEVC"),
-        HEVC_4K("url-4K-SDR", "4K HEVC");
-
-        companion object {
-            /** Saved choice, downgraded to H.264 if this TV can't decode Apple's HEVC. */
-            fun of(name: String?) = entries.firstOrNull { it.name == name }?.takeIf { it == H264_1080 || hasHevc() }
-            /** HEVC is ~40% smaller than H.264 at 1080p; only offered when the TV can decode it. */
-            fun best1080() = if (hasHevc()) HEVC_1080 else H264_1080
-        }
-    }
-
-    /**
-     * Apple's "SDR" HEVC aerials are HEVC Main 10 (10-bit), which plain HEVC decoders (e.g. the
-     * emulator's software one) can't play: require a decoder that lists the Main10 profile.
-     */
-    fun hasHevc(): Boolean = hevcMain10
-    private val hevcMain10: Boolean by lazy {
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
-            !info.isEncoder && info.supportedTypes.any { it.equals("video/hevc", true) } &&
-                runCatching { info.getCapabilitiesForType("video/hevc").profileLevels }.getOrNull()
-                    ?.any { it.profile == android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 } == true
-        }
     }
 
     private val io = Executors.newSingleThreadExecutor()
@@ -271,7 +246,7 @@ object Aerials {
     }
 
     private fun frameFromClip(a: Aerial, w: Int): android.graphics.Bitmap? = runCatching {
-        val url = a.h264() ?: return null
+        val url = a.url() ?: return null
         android.media.MediaMetadataRetriever().use { r ->
             r.setDataSource(url, HashMap())
             r.getScaledFrameAtTime(10_000_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, w, w * 9 / 16)
@@ -300,7 +275,7 @@ object Aerials {
             feed ?: return@load
             val hidden = store.saverHidden()
             val pick = feed.aerials.filter { it.id !in hidden && cachedFile(ctx, it) == null }.randomOrNull() ?: return@load
-            val url = pick.url(Quality.best1080()) ?: return@load
+            val url = pick.url() ?: return@load
             download(url, File(cacheDir(ctx), "${pick.id}.mov"), progress = {}) { f ->
                 if (f == null) { store.setSaverLastDownload(0); return@download }
                 cacheDir(ctx).listFiles { x -> x.extension == "mov" }?.sortedByDescending { it.lastModified() }
