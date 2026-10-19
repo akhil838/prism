@@ -423,19 +423,49 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
 
     // ---- data ---------------------------------------------------------------------------
 
+    /**
+     * Reload apps and wallpaper without blocking the main thread: wallpaper decode and the app list
+     * (cached copy first on a cold start, then a fresh read from the package manager) are done on
+     * [loader], each result applied as it arrives. Superseded reloads are dropped ([loadGen]).
+     */
     private fun reload(keepFocus: Boolean) {
+        val gen = ++loadGen
         val focusedTag = if (keepFocus) currentFocus?.tag as? String else null
-        apps = repo.load()
+        seenRev = store.rev()
+        val coldStart = apps.isEmpty()
+        val m = resources.displayMetrics
+        loader.execute {
+            val video = Wallpaper.videoPath(this)
+            val wall = if (video != null) Wallpaper.poster(video, m.widthPixels, m.heightPixels)
+                       else Wallpaper.load(this, m.widthPixels, m.heightPixels)
+            val glass = wall?.let { Wallpaper.glassOf(it) }
+            main.post { if (gen == loadGen && !isDestroyed) applyWallpaper(video, wall, glass) }
+            val cached = if (coldStart) repo.cached() else null
+            if (cached != null) main.post { if (gen == loadGen && !isDestroyed) applyApps(cached, focusedTag) }
+            val fresh = repo.load()
+            main.post {
+                if (gen != loadGen || isDestroyed) return@post
+                // Started from the cache and nothing changed: keep the tiles, take the live entries.
+                if (cached != null && repo.same(cached, fresh)) apps = fresh
+                else applyApps(fresh, focusedTag ?: currentFocus?.tag as? String) // keep wherever the user went
+            }
+            repo.save(fresh)
+        }
+    }
+
+    private fun applyApps(list: List<AppEntry>, focusedTag: String?) {
+        apps = list
         artCache.evictAll()
         cardsFor = null  // settings/app changes: rebuild the shelf from (cached) data
         shownArtFor = null
-        seenRev = store.rev()
-        loadWallpaper()
         rebuild {
             val target = focusedTag?.let { recycler.findViewWithTag<View>(it) }
             if (target != null) target.requestFocus() else focusDock(0)
         }
     }
+
+    private val loader = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var loadGen = 0
 
     /**
      * Re-applies dock order, saved grid order (then alphabetical) and hidden apps; then [then].
@@ -670,18 +700,15 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         }
     }
 
-    /** Wallpaper replaces per-app artwork as the Top Shelf; the glass frosts from it. */
-    private fun loadWallpaper() {
-        val m = resources.displayMetrics
-        val video = Wallpaper.videoPath(this)
-        wallpaper = if (video != null) Wallpaper.poster(video, m.widthPixels, m.heightPixels)
-                    else Wallpaper.load(this, m.widthPixels, m.heightPixels)
+    /** Wallpaper replaces per-app artwork as the Top Shelf; the glass frosts from it (decoded on [loader]). */
+    private fun applyWallpaper(video: String?, wall: android.graphics.Bitmap?, glass: android.graphics.Bitmap?) {
+        wallpaper = wall
         setVideo(video)
-        wallpaperGlass = wallpaper?.let { Wallpaper.glassOf(it) }
+        wallpaperGlass = glass
+        shownArtFor = null
         // Wallpaper: shown sharp and undimmed like tvOS, only a soft fade under the dock.
         // App artwork (blurred logos): darker wash so the dock and tiles stay legible.
-        // Over a wallpaper only the bottom third is darkened, so the shade covers just that band
-        // (the area above stays truly transparent over a video wallpaper).
+        // Over a wallpaper only the bottom third is darkened, so the shade covers just that band.
         shade.background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             if (wallpaper != null) intArrayOf(0x00000000, 0x4D000000)
