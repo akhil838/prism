@@ -104,7 +104,8 @@ class AerialView(context: Context) : FrameLayout(context) {
         running = true
         // Leftover temp clips from a crash or kill.
         context.cacheDir.listFiles { f -> f.name.startsWith("aerial-") && f.name.endsWith(".part") }?.forEach { it.delete() }
-        if (store.saverSource() == DockStore.SOURCE_PHOTOS) { startPhotos(); return }
+        playing = DockStore.saverSourceNow(store.saverSource(), Wallpaper.localFiles(context).isNotEmpty())
+        if (playing == DockStore.SOURCE_PHOTOS) { startPhotos(); return }
         status.text = context.getString(R.string.saver_loading)
         Aerials.refreshCache(context)
         Aerials.load(context) { feed ->
@@ -130,6 +131,9 @@ class AerialView(context: Context) : FrameLayout(context) {
         next()
     }
 
+    /** What this run plays (Shuffle resolved when it starts). */
+    private var playing = DockStore.SOURCE_AERIALS
+
     fun stop() {
         running = false
         main.removeCallbacksAndMessages(null)
@@ -146,7 +150,7 @@ class AerialView(context: Context) : FrameLayout(context) {
     private fun next() {
         if (!running || items.isEmpty()) return
         if (queue.isEmpty()) {
-            val shuffle = store.saverSource() != DockStore.SOURCE_PHOTOS || store.slideShuffle()
+            val shuffle = playing != DockStore.SOURCE_PHOTOS || store.slideShuffle()
             queue = ArrayDeque(if (shuffle) items.shuffled() else items)
         }
         when (val item = queue.removeFirst()) {

@@ -25,7 +25,7 @@
     <string name="apps">Apps</string>
     <string name="default_launcher">Default Launcher</string>
     <string name="about">About</string>
-    <string name="about_tv">About This TV</string>
+    <string name="system">System</string>
     <string name="screen_saver">Screen Saver</string>
     <string name="notifications">Notifications</string>
     <string name="sound_effects">Sound Effects</string>
@@ -41,7 +41,12 @@
     <string name="clear_all">Clear All</string>
     <string name="notif_open_access">Open Notification Access</string>
     <string name="notif_access_body">Allow Prism to show your apps\' notifications here. If your TV has no Notification access setting, run once from a computer with ADB:\n\nadb shell cmd notification allow_listener %1$s</string>
-    <string name="saver_note">Apple TV aerials or your own photos and videos. Starts on the Home screen after the time below; to show it over other apps too, make Prism Aerials the TV\'s screen saver.</string>
+    <string name="saver_note">Choose the screen saver you want to use. It starts on the Home screen after the time you set; to show it over other apps too, use it with other apps.</string>
+    <string name="saver_shuffle">Shuffle</string>
+    <string name="saver_shuffle_info">Shuffle through available screen savers throughout the day.</string>
+    <string name="saver_aerials_info">Apple TV aerial videos: landscapes, cities, underwater and Earth from space.</string>
+    <string name="saver_photos_info">Your own photos and videos, from the folder used for wallpapers.</string>
+    <string name="saver_no_photos">No Photos</string>
     <string name="saver_preview">Preview</string>
     <string name="saver_current">Current Selection</string>
     <string name="saver_prefs">Screen Saver Preferences</string>
@@ -99,7 +104,20 @@
     <string name="setup_adb_title">Home Button Still Opens the Old Launcher?</string>
     <string name="setup_adb_body">Some TVs (Google TV, TCL) always prefer their built-in launcher. From a computer on the same network, with ADB debugging enabled on the TV, run:\n\nadb shell pm disable-user --user 0 %1$s\n\nTo undo:\nadb shell pm enable %1$s\n\nPrism (%2$s) then becomes the Home screen.</string>
     <string name="continue_to_settings">Continue to Settings</string>
-    <string name="about_body">Prism %1$s\n\nA lightweight tvOS-inspired launcher. No background services, no tracking. Avatars: DiceBear (CC0). Gallery photos: Unsplash via Lorem Picsum.</string>
+    <string name="about_body">Prism %1$s\n\nA lightweight launcher for Android TV that brings the tvOS look home: a glass dock, a Top Shelf that previews what your apps are playing, Apple\'s aerial screen savers and live wallpapers.\n\nBuilt to run smoothly on modest TVs: a quality setting trades effects for memory, and nothing runs in the background. No accounts, no ads, no tracking.\n\nAvatars: DiceBear (CC0). Gallery photos: Unsplash via Lorem Picsum. Aerials: Apple.</string>
+    <string name="about_made_by">Made with ❤️ by akhil838</string>
+    <string name="about_github">View on GitHub</string>
+    <string name="about_github_url">https://github.com/akhil838/prism</string>
+    <string name="update_check">Check for Updates</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_current">Up to date</string>
+    <string name="update_available">Install %1$s</string>
+    <string name="update_downloading">Downloading %1$d%%</string>
+    <string name="update_failed">Couldn\'t check</string>
+    <string name="update_download_failed">Couldn\'t download the update</string>
+    <string name="update_install_failed">Update not installed: %1$s</string>
+    <string name="update_allow">Allow Prism to install apps, then choose Check for Updates again</string>
+    <string name="update_info">Prism %1$s is available (%2$s). Press to download and install it; your settings are kept.</string>
 
     <string name="wallpaper">Wallpaper</string>
     <string name="wallpaper_gallery">Photo Gallery</string>

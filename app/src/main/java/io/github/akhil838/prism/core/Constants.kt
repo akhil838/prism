@@ -55,10 +55,27 @@ object Constants {
         const val TOP = 0.723f
         /** Glass edge -> resting tile, x tile height (fitted: 22.5 px above and below an 84.8 px tile). */
         const val GLASS_PAD = 0.265f
+        /**
+         * White wash over the backdrop: tvOS 26's dock glass is lighter than what's behind it (fitted:
+         * +22..25 levels in every channel over an orange backdrop, about 11% white), never darker.
+         */
+        const val GLASS_TINT = 0.11f
         /** Up-chevron above the dock: width x tile width, gap above the glass x tile height, opacity. */
         const val CHEVRON_WIDTH = 0.205f       // fitted: 29 px over a 141.5 px tile
         const val CHEVRON_GAP = 0.171f         // fitted: 14.5 px above the glass
         const val CHEVRON_ALPHA = 0.35f        // faint: a hint, not a control
+    }
+
+    /** Settings hero: Prism's mark as a frosted plate (fitted on the tvOS Settings capture). */
+    object Hero {
+        /** Plate corner, x plate width (fitted: ~74 px on a 306 px plate). */
+        const val RADIUS = 0.24f
+        /** White over the frosted backdrop: plate (fitted 0.28) and the glyph cut into it. */
+        const val PLATE_ALPHA = 0.28f
+        const val GLYPH_ALPHA = 0.08f
+        /** Glyph width x plate width, and its lift above centre (negative: sits a little low, per review). */
+        const val GLYPH_WIDTH = 0.38f
+        const val GLYPH_LIFT = -0.03f
     }
 
     /** Focus animation timings (ms). */

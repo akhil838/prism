@@ -14,9 +14,13 @@ on:
         type: choice
         default: both
         options: [both, release, debug]
+      option_3:
+        description: "Publish the release APKs as GitHub release v<versionName> (Prism's Check for Updates reads it)"
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write # only used by the optional publish step
 
 jobs:
   build:
@@ -90,3 +94,16 @@ jobs:
           name: prism-apks-${{ inputs.option_1 }}-${{ inputs.option_2 }}-${{ github.run_number }}
           path: dist/*.apk
           if-no-files-found: error
+
+      # Prism's About -> Check for Updates reads releases/latest and installs prism-<v>-<abi>-release.apk.
+      - name: Publish release
+        if: inputs.option_3 && inputs.option_2 != 'debug'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" dist/*-release.apk --clobber
+          else
+            gh release create "v$VERSION" dist/*-release.apk --title "Prism $VERSION" --generate-notes --target "$GITHUB_SHA"
+          fi

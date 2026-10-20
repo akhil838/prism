@@ -10,8 +10,9 @@ android {
         applicationId = "io.github.akhil838.prism"
         minSdk = 30 // TCL TV runs Android 11
         targetSdk = 36
-        versionCode = 1
         versionName = "0.1.0"
+        // From versionName (1.2.3 -> 10203): every release installs over the last (About -> Check for Updates).
+        versionCode = versionName!!.split('.').map { it.toInt() }.fold(0) { acc, p -> acc * 100 + p }
     }
 
     buildFeatures {

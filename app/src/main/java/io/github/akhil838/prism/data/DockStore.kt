@@ -44,7 +44,7 @@ class DockStore(context: Context) {
     /** Minutes of inactivity on Home before the screen saver starts; 0 = never. */
     fun saverDelay(): Int = prefs.getInt("saver_delay", 5)
     fun setSaverDelay(min: Int) = prefs.edit().putInt("saver_delay", min).apply()
-    /** What the screen saver shows: Apple aerials or the TV's own photos & videos. */
+    /** What the screen saver shows: Apple aerials, the TV's own photos & videos, or Shuffle between them. */
     fun saverSource(): String = prefs.getString("saver_source", SOURCE_AERIALS)!!
     fun setSaverSource(v: String) = prefs.edit().putString("saver_source", v).apply()
     /** Aerial ids the user hid in Choose Aerials (tvOS model: everything shows unless hidden). */
@@ -107,6 +107,19 @@ class DockStore(context: Context) {
         private const val KEY_RECO = "show_reco"
         const val SOURCE_AERIALS = "aerials"
         const val SOURCE_PHOTOS = "photos"
+        /** Rotates through the available sources during the day: see [saverSourceNow]. */
+        const val SOURCE_SHUFFLE = "shuffle"
+        private const val SHUFFLE_BLOCK_MS = 2 * 60 * 60 * 1000L
+
+        /**
+         * The source to play now: [source] itself, or for Shuffle the one for this two-hour block of
+         * the day, among those that have something to show (photos only when the folder has files).
+         */
+        fun saverSourceNow(source: String, hasPhotos: Boolean): String {
+            if (source != SOURCE_SHUFFLE) return source
+            val options = if (hasPhotos) listOf(SOURCE_AERIALS, SOURCE_PHOTOS) else listOf(SOURCE_AERIALS)
+            return options[((System.currentTimeMillis() / SHUFFLE_BLOCK_MS) % options.size).toInt()]
+        }
         private const val KEY_REV = "rev"
         private const val KEY_BLUR = "glass_blur"
         private const val KEY_DIM = "glass_dim"

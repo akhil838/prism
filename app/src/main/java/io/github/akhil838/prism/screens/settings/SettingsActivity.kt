@@ -29,6 +29,7 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.akhil838.prism.BuildConfig
 import io.github.akhil838.prism.R
+import io.github.akhil838.prism.core.Constants
 import io.github.akhil838.prism.core.Perf
 import io.github.akhil838.prism.core.perf
 import io.github.akhil838.prism.data.Aerials
@@ -39,6 +40,7 @@ import io.github.akhil838.prism.data.Channels
 import io.github.akhil838.prism.data.DeviceInfo
 import io.github.akhil838.prism.data.DockStore
 import io.github.akhil838.prism.data.Wallpaper
+import io.github.akhil838.prism.data.Updates
 import io.github.akhil838.prism.media.Frost
 import io.github.akhil838.prism.media.Sounds
 import io.github.akhil838.prism.screens.intro.IntroActivity
@@ -46,6 +48,8 @@ import io.github.akhil838.prism.screens.saver.AerialDream
 import io.github.akhil838.prism.screens.saver.ChooseAerialsActivity
 import io.github.akhil838.prism.screens.saver.ScreenSaverActivity
 import io.github.akhil838.prism.ui.components.DownloadBadge
+import io.github.akhil838.prism.ui.components.GlassBadge
+import io.github.akhil838.prism.ui.components.GlassGlyph
 import io.github.akhil838.prism.ui.components.GlassStyle
 import io.github.akhil838.prism.ui.components.glassStyle
 import io.github.akhil838.prism.ui.theme.Dims
@@ -69,6 +73,8 @@ class SettingsActivity : Activity() {
         val chevron: Boolean = false,
         /** Small status icon at the row's right edge (download circle). */
         val icon: (() -> Drawable?)? = null,
+        /** Glyph before the title (GitHub mark), tinted like the title. */
+        val glyph: Int? = null,
         /** Section label (tvOS "SCREEN SAVER PREFERENCES"): not focusable, no pill. */
         val header: Boolean = false,
         val onClick: () -> Unit,
@@ -80,7 +86,10 @@ class SettingsActivity : Activity() {
         val rows: () -> List<Row> = { emptyList() },
         /** Custom right-hand content instead of rows (e.g. the avatar grid). */
         val custom: ((LinearLayout) -> Unit)? = null,
+        /** Text at the top of the list (long explanations). */
         val note: String? = null,
+        /** Short description under the hero (tvOS), shown when the focused row has no [Row.info] of its own. */
+        val info: String? = null,
     )
 
     private lateinit var store: DockStore
@@ -178,12 +187,14 @@ class SettingsActivity : Activity() {
         heroView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             outlineProvider = object : ViewOutlineProvider() {
-                // Concentric with tvOS tiles: corner = 13% of the short side, whatever the aspect.
-                override fun getOutline(view: View, outline: Outline) =
-                    outline.setRoundRect(0, 0, view.width, view.height, min(view.width, view.height) * 0.13f)
+                // Concentric with tvOS tiles: corner = 13% of the short side, whatever the aspect;
+                // the frosted badge keeps its own rounder plate.
+                override fun getOutline(view: View, outline: Outline) {
+                    val k = if ((view as ImageView).drawable is GlassBadge) Constants.Hero.RADIUS else 0.13f
+                    outline.setRoundRect(0, 0, view.width, view.height, min(view.width, view.height) * k)
+                }
             }
             clipToOutline = true
-            elevation = 18 * pt
         }
         root.addView(heroView, heroParams(1f))
 
@@ -225,7 +236,7 @@ class SettingsActivity : Activity() {
         val rows = if (page.custom == null) page.rows() else emptyList()
         val focusRow = rows.filterNot { it.header }.getOrNull(focusIndex)
         setHero(focusRow?.hero?.invoke() ?: page.hero())
-        setInfo(focusRow?.info?.invoke())
+        setInfo(focusRow?.info?.invoke() ?: page.info)
         if (page.note != null) {
             list.addView(TextView(this).apply {
                 text = page.note
@@ -248,11 +259,13 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /** Hero box: fits [aspect] (w/h) inside a 540 pt square centred where tvOS puts it. */
+    /**
+     * Hero box centred where tvOS puts it: square art fits 540 pt; landscape images (wallpapers,
+     * aerials, Shuffle's strips) are 800 pt wide, as measured on tvOS's Current Selection (798 px).
+     */
     private fun heroParams(aspect: Float): FrameLayout.LayoutParams {
-        val box = 540 * pt
-        val w = if (aspect >= 1f) box else box * aspect
-        val h = if (aspect >= 1f) box / aspect else box
+        val w = if (aspect >= 1f) minOf(800 * pt, 540 * pt * aspect) else 540 * pt * aspect
+        val h = if (aspect >= 1f) w / aspect else 540 * pt
         val cx = (254 + 270) * pt
         val cy = (237 + 270) * pt
         return FrameLayout.LayoutParams(w.toInt(), h.toInt()).apply {
@@ -262,10 +275,22 @@ class SettingsActivity : Activity() {
 
     /**
      * Photos, banners and avatars fill a rounded box shaped like the image (wallpapers and TV
-     * banners become rounded 16:9 cards). Vector/adaptive icons sit centred on a rounded plate.
+     * banners become rounded 16:9 cards). Vector/adaptive icons sit centred on a rounded plate;
+     * Prism's own [GlassBadge] is the plate. Only opaque images cast a shadow: through glass it shows.
      */
     private fun setHero(d: Drawable?) {
         heroView.setImageDrawable(d)
+        val glass = d is GlassBadge || d is GlassGlyph
+        heroView.elevation = if (glass) 0f else 18 * pt
+        heroView.clipToOutline = d !is GlassGlyph // the glyph reaches the box corners
+        if (glass) {
+            heroView.layoutParams = heroParams(if (d is GlassGlyph) d.intrinsicWidth / d.intrinsicHeight.toFloat() else 1f)
+            heroView.scaleType = ImageView.ScaleType.FIT_XY
+            heroView.background = null
+            heroView.setPadding(0, 0, 0, 0)
+            heroView.invalidateOutline()
+            return
+        }
         val bitmap = (d as? BitmapDrawable)?.bitmap
         val plate = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0x59FFFFFF, 0x33FFFFFF))
         if (bitmap != null && d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
@@ -334,11 +359,16 @@ class SettingsActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
             maxWidth = (520 * pt).toInt() // leave the row's name room; long values show in full under the hero
         }
-        val chevron = TextView(this).apply {
-            text = "›"
-            setTextColor(SECONDARY)
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, 46 * pt)
-            setPadding((14 * pt).toInt(), 0, 0, (6 * pt).toInt())
+        // tvOS chevron (fitted): 20 x 34 pt, its right edge 36 pt in from the pill's; grey on white when focused.
+        val chevron = ImageView(this).apply {
+            setImageResource(R.drawable.ic_chevron_right)
+            imageTintList = android.content.res.ColorStateList.valueOf(SECONDARY)
+        }
+        val glyph = row.glyph?.let { res ->
+            ImageView(this).apply {
+                setImageResource(res)
+                imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            }.also { cell.addView(it, LinearLayout.LayoutParams((34 * pt).toInt(), (34 * pt).toInt()).apply { rightMargin = (18 * pt).toInt() }) }
         }
         cell.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         cell.addView(value)
@@ -346,17 +376,20 @@ class SettingsActivity : Activity() {
         val icon = row.icon?.invoke()
         if (icon != null) cell.addView(ImageView(this).apply { setImageDrawable(icon) },
             LinearLayout.LayoutParams((34 * pt).toInt(), (34 * pt).toInt()).apply { leftMargin = (14 * pt).toInt() })
-        if (row.chevron) cell.addView(chevron) else value.setPadding(0, 0, (8 * pt).toInt(), 0)
+        if (row.chevron) cell.addView(chevron, LinearLayout.LayoutParams((20 * pt).toInt(), (34 * pt).toInt()).apply {
+            leftMargin = (16 * pt).toInt(); rightMargin = (10 * pt).toInt()
+        }) else value.setPadding(0, 0, (8 * pt).toInt(), 0)
         cell.setOnFocusChangeListener { v, has ->
             // tvOS: rows are clear glass pills; the focused one turns white with dark text.
             bg.setColor(if (has) Color.WHITE else UNFOCUSED)
             title.setTextColor(if (has) 0xFF1C1C1E.toInt() else Color.WHITE)
+            glyph?.imageTintList = android.content.res.ColorStateList.valueOf(if (has) 0xFF1C1C1E.toInt() else Color.WHITE)
             value.setTextColor(if (has) 0xFF6E6A75.toInt() else SECONDARY)
-            chevron.setTextColor(if (has) 0xFF6E6A75.toInt() else SECONDARY)
+            chevron.imageTintList = android.content.res.ColorStateList.valueOf(if (has) 0xFF8C8C8C.toInt() else SECONDARY)
             (icon as? DownloadBadge)?.focused = has
             v.animate().scaleX(if (has) 1.015f else 1f).scaleY(if (has) 1.04f else 1f)
                 .setDuration(150).start()
-            if (has) { setHero(row.hero?.invoke() ?: page.hero()); setInfo(row.info?.invoke()) }
+            if (has) { setHero(row.hero?.invoke() ?: page.hero()); setInfo(row.info?.invoke() ?: page.info) }
         }
         cell.setOnClickListener {
             focusStack.addLast(currentFocusIndex())
@@ -393,7 +426,8 @@ class SettingsActivity : Activity() {
 
     // ---- pages --------------------------------------------------------------------------
 
-    private fun appIcon(): Drawable = getDrawable(R.drawable.ic_launcher)!!
+    private val badge = GlassBadge()
+    private fun appIcon(): Drawable = badge
 
     private fun rootPage() = Page(
         title = getString(R.string.settings),
@@ -408,12 +442,12 @@ class SettingsActivity : Activity() {
                 Row(getString(R.string.top_shelf), value = { getString(if (store.showReco() && Channels.allowed(this)) R.string.on else R.string.off) }, chevron = true) { push(topShelfPage()) },
                 Row(getString(R.string.wallpaper), value = { getString(if (Wallpaper.isSet(this)) R.string.on else R.string.off) },
                     hero = { wallpaperHero() }, info = { currentInfo() }, chevron = true) { push(wallpaperPage()) },
-                Row(getString(R.string.screen_saver), value = { delayLabel(store.saverDelay()) }, hero = { aerialHero(null) }, chevron = true) { push(screenSaverPage()) },
+                Row(getString(R.string.screen_saver), value = { delayLabel(store.saverDelay()) }, chevron = true) { push(screenSaverPage()) },
                 Row(getString(R.string.profile_picture_title), hero = { avatarHero() }, chevron = true) { push(avatarStylesPage()) },
                 Row(getString(R.string.apps), chevron = true) { push(appsPage()) },
                 Row(getString(R.string.default_launcher), value = { getString(if (isDefaultHome()) R.string.on else R.string.off) }, chevron = true) { push(setupPage()) },
                 Row(getString(R.string.intro_run_again)) { startActivity(Intent(this, IntroActivity::class.java)) },
-                Row(getString(R.string.about_tv), value = { "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}" }, chevron = true) { push(aboutTvPage()) },
+                Row(getString(R.string.system), chevron = true) { push(systemPage()) },
                 Row(getString(R.string.about), value = { BuildConfigVersion.name(this) }, chevron = true) { push(aboutPage()) },
             )
         },
@@ -558,6 +592,8 @@ class SettingsActivity : Activity() {
             val d = BitmapDrawable(resources, bm)
             aerialPreviews[url] = d
             aerialPlaceholders.remove(url)
+            // Shuffle's strips grow as stills arrive (only on its own page: the fallback may be the shared badge).
+            if (heroView.drawable === shuffleDrawable && stack.lastOrNull()?.title == getString(R.string.saver_current)) { setHero(shuffleHero()); return@fetch }
             if (heroView.drawable === placeholder) setHero(d) // still the row that asked for it
         }
         return placeholder
@@ -580,16 +616,17 @@ class SettingsActivity : Activity() {
         return cached ?: aerialHero(c.id)
     }
 
-    private fun sourceLabel() = getString(if (store.saverSource() == DockStore.SOURCE_PHOTOS) R.string.saver_photos else R.string.saver_aerials)
+    /** tvOS Screen Saver hero: the frosted mountains glyph, no plate. */
+    private val saverGlyph by lazy { GlassGlyph(getDrawable(R.drawable.ic_saver_photos)!!) }
 
-    /** tvOS Settings → Screen Saver. */
+    /** tvOS Settings → Screen Saver, plus Preview and the system screen saver options. */
     private fun screenSaverPage() = Page(
         title = getString(R.string.screen_saver),
-        hero = { aerialHero(null) },
-        note = getString(R.string.saver_note),
+        hero = { saverGlyph },
+        info = getString(R.string.saver_note),
         rows = {
             listOf(
-                Row(getString(R.string.saver_current), value = { sourceLabel() }, chevron = true) { push(saverSourcePage()) },
+                Row(getString(R.string.saver_current), chevron = true) { push(saverSourcePage()) },
                 Row(getString(R.string.saver_start_after), value = { delayLabel(store.saverDelay()) }, chevron = true) { push(saverDelayPage()) },
                 Row(getString(R.string.saver_preview)) { startActivity(Intent(this, ScreenSaverActivity::class.java)) },
                 Row(getString(R.string.saver_system), value = { getString(if (isSystemSaver()) R.string.on else R.string.off) },
@@ -597,7 +634,7 @@ class SettingsActivity : Activity() {
                     try { startActivity(Intent(Settings.ACTION_DREAM_SETTINGS)) } catch (e: Exception) { push(saverAdbPage()) }
                 },
                 Row(getString(R.string.saver_prefs), header = true) {},
-                Row(getString(R.string.saver_aerials), chevron = true) { push(aerialsPrefsPage()) },
+                Row(getString(R.string.saver_aerials), hero = { aerialHero(null) }, chevron = true) { push(aerialsPrefsPage()) },
                 Row(getString(R.string.saver_photos), value = { Wallpaper.localFiles(this).size.toString() }, hero = { wallpaperHero() }, chevron = true) { push(photosPrefsPage()) },
                 Row(getString(R.string.saver_adb_title), chevron = true) { push(saverAdbPage()) },
             )
@@ -609,20 +646,63 @@ class SettingsActivity : Activity() {
         Settings.Secure.getString(contentResolver, "screensaver_components")?.contains(packageName) == true
     }.getOrDefault(false)
 
+    /** tvOS Current Selection: Shuffle or one screen saver; each row previews itself under its description. */
     private fun saverSourcePage() = Page(
         title = getString(R.string.saver_current),
-        hero = { aerialHero(null) },
+        hero = { shuffleHero() },
         rows = {
-            listOf(DockStore.SOURCE_AERIALS to R.string.saver_aerials, DockStore.SOURCE_PHOTOS to R.string.saver_photos).map { (v, label) ->
-                Row(getString(label), value = { if (store.saverSource() == v) "✓" else null },
-                    hero = if (v == DockStore.SOURCE_PHOTOS) ({ wallpaperHero() }) else null) { store.setSaverSource(v); pop() }
-            }
+            val hasPhotos = Wallpaper.localFiles(this).isNotEmpty()
+            fun mark(v: String) = if (store.saverSource() == v) "✓" else null
+            listOf(
+                Row(getString(R.string.saver_shuffle), value = { mark(DockStore.SOURCE_SHUFFLE) }, hero = { shuffleHero() },
+                    info = { getString(R.string.saver_shuffle_info) }) { store.setSaverSource(DockStore.SOURCE_SHUFFLE); pop() },
+                Row(getString(R.string.saver_aerials), value = { mark(DockStore.SOURCE_AERIALS) }, hero = { aerialHero(null) },
+                    info = { getString(R.string.saver_aerials_info) }) { store.setSaverSource(DockStore.SOURCE_AERIALS); pop() },
+                Row(getString(R.string.saver_photos), value = { if (hasPhotos) mark(DockStore.SOURCE_PHOTOS) else getString(R.string.saver_no_photos) },
+                    hero = { wallpaperHero() }, info = { getString(R.string.saver_photos_info) }) {
+                    if (!hasPhotos) {
+                        focusStack.removeLastOrNull()
+                        Toast.makeText(this, getString(R.string.slides_empty, Wallpaper.localDir(this)?.path ?: ""), Toast.LENGTH_LONG).show()
+                        return@Row
+                    }
+                    store.setSaverSource(DockStore.SOURCE_PHOTOS); pop()
+                },
+            )
         },
     )
 
+    private var shuffleDrawable: Drawable? = null
+    private var shuffleKey: List<Any>? = null
+
+    /**
+     * tvOS Shuffle preview: one vertical strip per screen saver it rotates through, side by side in a
+     * 16:9 card (aerial category stills, then a photo of your own). Rebuilt as stills arrive.
+     */
+    private fun shuffleHero(): Drawable {
+        val strips = ArrayList<android.graphics.Bitmap>(4)
+        aerialFeed?.categories?.take(3)?.forEach { c -> (aerialHero(c.id) as? BitmapDrawable)?.bitmap?.let(strips::add) }
+        Wallpaper.localFiles(this).firstOrNull { !Wallpaper.isVideo(it) }?.let { f -> (photo(f) as? BitmapDrawable)?.bitmap?.let(strips::add) }
+        if (strips.size < 2) return (strips.firstOrNull()?.let { BitmapDrawable(resources, it) } ?: aerialHero(null)).also { shuffleDrawable = it; shuffleKey = null }
+        if (strips == shuffleKey) shuffleDrawable?.let { return it }
+        val w = (800 * pt).toInt(); val h = w * 9 / 16
+        val out = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.RGB_565)
+        val canvas = android.graphics.Canvas(out)
+        val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+        strips.forEachIndexed { i, bm ->
+            val dst = android.graphics.Rect(w * i / strips.size, 0, w * (i + 1) / strips.size, h)
+            // Centre-crop the source to the strip's aspect.
+            val k = minOf(bm.width / dst.width().toFloat(), bm.height / dst.height().toFloat())
+            val sw = (dst.width() * k).toInt(); val sh = (dst.height() * k).toInt()
+            val sx = (bm.width - sw) / 2; val sy = (bm.height - sh) / 2
+            canvas.drawBitmap(bm, android.graphics.Rect(sx, sy, sx + sw, sy + sh), dst, paint)
+        }
+        shuffleKey = strips
+        return BitmapDrawable(resources, out).also { shuffleDrawable = it }
+    }
+
     private fun saverDelayPage() = Page(
         title = getString(R.string.saver_start_after),
-        hero = { aerialHero(null) },
+        hero = { saverGlyph },
         rows = {
             listOf(0, 2, 5, 10, 15, 30).map { m ->
                 Row(delayLabel(m), value = { if (store.saverDelay() == m) "✓" else null }) { store.setSaverDelay(m); pop() }
@@ -776,7 +856,7 @@ class SettingsActivity : Activity() {
 
     /** Photo preview for the 540 pt hero box. */
     private fun photo(f: java.io.File): Drawable? = previewCache.getOrPut("${f.path}@${f.lastModified()}") {
-        val box = (540 * pt).toInt()
+        val box = (800 * pt).toInt()
         Wallpaper.decode(f.path, box, box * 9 / 16)?.let { BitmapDrawable(resources, it) }
     }
 
@@ -982,18 +1062,95 @@ class SettingsActivity : Activity() {
     )
 
     /** Hardware and software details; each row's detail line shows under the hero when focused. */
-    private fun aboutTvPage() = Page(
-        title = getString(R.string.about_tv),
+    private fun systemPage() = Page(
+        title = getString(R.string.system),
         hero = ::appIcon,
         rows = { DeviceInfo.items(this).map { Row(it.label, value = { it.value }, info = { it.detail }) {} } },
     )
 
-    private fun aboutPage() = Page(
-        title = getString(R.string.about),
-        hero = ::appIcon,
-        note = getString(R.string.about_body, BuildConfigVersion.name(this)),
-        rows = { listOf(Row(getString(R.string.done)) { pop() }) },
-    )
+    /** What Prism is, who made it (under the hero), updates and a link to the source. */
+    private fun aboutPage(): Page {
+        lateinit var page: Page
+        page = Page(
+            title = getString(R.string.about),
+            hero = ::appIcon,
+            note = getString(R.string.about_body, BuildConfigVersion.name(this)),
+            rows = {
+                val madeBy = { getString(R.string.about_made_by) }
+                val u = update
+                listOf(
+                    Row(getString(R.string.update_check), value = { updateLabel() },
+                        info = { if (u is Updates.Check.Available) getString(R.string.update_info, u.version, android.text.format.Formatter.formatShortFileSize(this, u.bytes)) else madeBy() }) {
+                        onUpdateRow(page)
+                    },
+                    Row(getString(R.string.about_github), value = { "github.com/akhil838/prism" },
+                        info = madeBy, glyph = R.drawable.ic_github) { openGithub() },
+                )
+            },
+        )
+        return page
+    }
+
+    /** Last update check this session; null = not checked. [updatePct] >= 0 while downloading. */
+    private var update: Updates.Check? = null
+    private var checking = false
+    private var updatePct = -1
+
+    private fun updateLabel(): String = when {
+        checking -> getString(R.string.update_checking)
+        updatePct >= 0 -> getString(R.string.update_downloading, updatePct)
+        else -> when (val u = update) {
+            null -> ""
+            Updates.Check.UpToDate -> getString(R.string.update_current)
+            Updates.Check.Failed -> getString(R.string.update_failed)
+            is Updates.Check.Available -> getString(R.string.update_available, u.version)
+        }
+    }
+
+    /** First press checks; once a newer release is found, the next press downloads and installs it. */
+    private fun onUpdateRow(page: Page) {
+        if (checking || updatePct >= 0) { focusStack.removeLastOrNull(); return }
+        // Re-render in place for async results: the row's click already pushed the focus index.
+        fun show() { if (!isDestroyed && stack.lastOrNull() === page) render(currentFocusIndex()) }
+        val u = update
+        if (u !is Updates.Check.Available) {
+            checking = true; refresh()
+            Updates.apkFile(this).delete() // an earlier update's APK, installed or abandoned
+            Updates.check(BuildConfigVersion.name(this)) { checking = false; update = it; show() }
+            return
+        }
+        if (!packageManager.canRequestPackageInstalls()) {
+            focusStack.removeLastOrNull()
+            Toast.makeText(this, R.string.update_allow, Toast.LENGTH_LONG).show()
+            runCatching {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")))
+            }
+            return
+        }
+        updatePct = 0; refresh()
+        Aerials.download(u.apkUrl, Updates.apkFile(this), progress = { pct ->
+            if (pct >= 0 && pct != updatePct) { updatePct = pct; show() }
+        }) { file ->
+            updatePct = -1; show()
+            if (file == null) { Toast.makeText(this, R.string.update_download_failed, Toast.LENGTH_LONG).show(); return@download }
+            Updates.install(this, file) { msg ->
+                Toast.makeText(this, getString(R.string.update_install_failed, msg ?: "?"), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /**
+     * Many TVs have no real browser, only Android TV's stub that silently does nothing: then show the
+     * address instead so it can be typed on a phone.
+     */
+    private fun openGithub() {
+        val url = getString(R.string.about_github_url)
+        val view = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+        val browsers = packageManager.queryIntentActivities(view, 0)
+            .filterNot { it.activityInfo.packageName.contains("frameworkpackagestubs") }
+        if (browsers.isEmpty()) Toast.makeText(this, url, Toast.LENGTH_LONG).show()
+        else runCatching { startActivity(view) }.onFailure { Toast.makeText(this, url, Toast.LENGTH_LONG).show() }
+    }
 
     // ---- default home -------------------------------------------------------------------
 

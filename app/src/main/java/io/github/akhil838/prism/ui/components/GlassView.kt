@@ -17,6 +17,7 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
+import io.github.akhil838.prism.core.Constants
 import io.github.akhil838.prism.core.Diag
 import io.github.akhil838.prism.core.Perf
 import io.github.akhil838.prism.core.perf
@@ -88,7 +89,9 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
                 outline.alpha = 0.8f
             }
         }
-        applyStyle()
+        // Not applyStyle(): its invalidate() would run before the fields declared below exist.
+        elevation = elevationMax * glassStyle.blur / 100f
+        updateShaders()
     }
 
     /** Pre-blurred full-screen bitmap used for the frost layer; [color] kept for API stability. */
@@ -249,21 +252,47 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
     /**
      * The glass layer is frozen while things move under it: a change on its own redraws at once, but
      * during a stream of changes (scrolling into the grid, backdrop / frost fades: one per frame) it
-     * keeps its last image and redraws once, [SETTLE_MS] after the last one, refraction included.
+     * redraws once, [SETTLE_MS] after the last one, refraction included.
      * Redrawing it every frame was an extra off-screen pass per frame (and the mesh, thousands of
      * triangles per source) on top of the busiest frames; on the TCL every frame of those
      * transitions already took the GPU 30-120 ms.
+     *
+     * When a stream starts, the glass is redrawn once without its copies of the backdrop (refraction
+     * and shade overlay): a frozen copy would show the old scene (the grid's frost, the shelf shade)
+     * over the new one until it settled, tinting the dock lighter or darker mid-move. Without them
+     * the glass is just its tint and rim over the live scene below, which stays correct as it moves.
      */
     private var moving = false
     private var lastInvalidate = 0L
-    private val settle = Runnable { moving = false; redraw() }
+    private val settle = Runnable { moving = false; fadeInCopies() }
+
+    /**
+     * Opacity of the backdrop copies (0..1). They fade in after a move settles: refraction bends in
+     * the darker or brighter scene around the rim, so popping it in shifted the dock's colour.
+     */
+    private var copiesAlpha = 1f
+    private val copiesFade = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = COPIES_FADE_MS
+        addUpdateListener { copiesAlpha = it.animatedValue as Float; redraw() }
+    }
+
+    private fun fadeInCopies() {
+        copiesFade.cancel()
+        if (perf.refraction == Perf.Refraction.OFF) { copiesAlpha = 1f; redraw(); return } // nothing to fade
+        copiesAlpha = 0f
+        copiesFade.start()
+    }
 
     override fun invalidate() {
         val now = android.os.SystemClock.uptimeMillis()
+        val wasMoving = moving
         moving = now - lastInvalidate < SETTLE_MS
         lastInvalidate = now
         removeCallbacks(settle)
-        if (moving) postDelayed(settle, SETTLE_MS) else redraw()
+        if (!moving) { if (!copiesFade.isRunning) redraw(); return }
+        copiesFade.cancel()
+        if (!wasMoving) redraw()
+        postDelayed(settle, SETTLE_MS)
     }
 
     private fun redraw() {
@@ -293,12 +322,20 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
         canvas.clipPath(clip)
 
         val r = perf.refraction
-        if (Diag.glass && r != Perf.Refraction.OFF && !(r == Perf.Refraction.AT_REST && moving)) drawRefracted(canvas)
-        overlay?.let {
-            canvas.save()
-            canvas.translate(-location[0].toFloat(), -location[1].toFloat())
-            it(canvas)
-            canvas.restore()
+        // Copies of the backdrop under the glass: the refracted layers, then the shade drawn over them
+        // (the real shade is hidden under them). Without refraction the live scene, shade included,
+        // already shows through: drawing the shade again doubled it. Moving: none (see [moving]).
+        if (!moving && Diag.glass && r != Perf.Refraction.OFF && copiesAlpha > 0f) {
+            val layer = copiesAlpha < 1f
+            if (layer) canvas.saveLayerAlpha(bounds, (copiesAlpha * 255).toInt())
+            drawRefracted(canvas)
+            overlay?.let {
+                canvas.save()
+                canvas.translate(-location[0].toFloat(), -location[1].toFloat())
+                it(canvas)
+                canvas.restore()
+            }
+            if (layer) canvas.restore()
         }
 
         val s = glassStyle
@@ -315,7 +352,7 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
             canvas.drawBitmap(src, srcRect, bounds, bitmapPaint)
         }
         fillPaint.shader = null
-        fillPaint.color = ((s.blur * 0x1A / 100) shl 24) or 0x00FFFFFF
+        fillPaint.color = white(Constants.Dock.GLASS_TINT + s.blur * 0.1f / 100)
         canvas.drawRect(bounds, fillPaint)
         fillPaint.color = ((s.dim * 0xD9 / 100) shl 24) or 0x001C1C1F
         canvas.drawRect(bounds, fillPaint)
@@ -332,8 +369,11 @@ class GlassView(context: Context, dims: Dims) : FrameLayout(context) {
 /** Quiet time after the glass's last change before its refraction mesh is drawn again. */
 private const val SETTLE_MS = 150L
 
-/** User-tunable glass look, 0..100 each. Default matches a clear tvOS 26 dock over artwork. */
-data class GlassStyle(val blur: Int = 0, val dim: Int = 20, val gloss: Int = 50, val refraction: Int = 50)
+/** Fade-in of the refraction after a move settles: smooth instead of a colour pop, ~11 frames. */
+private const val COPIES_FADE_MS = 180L
+
+/** User-tunable glass look, 0..100 each. Default matches the light, clear tvOS 26 dock over artwork (no dim). */
+data class GlassStyle(val blur: Int = 0, val dim: Int = 0, val gloss: Int = 50, val refraction: Int = 50)
 
 /** Process-wide current style; activities load it from preferences. */
 var glassStyle = GlassStyle()
