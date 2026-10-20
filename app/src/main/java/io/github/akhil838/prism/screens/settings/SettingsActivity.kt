@@ -1169,6 +1169,8 @@ class SettingsActivity : Activity() {
                     },
                     Row(getString(R.string.about_github), value = { "github.com/akhil838/prism" },
                         info = madeBy, glyph = R.drawable.ic_github) { openGithub() },
+                    Row(getString(R.string.about_notices), info = madeBy, chevron = true) { push(legalPage(R.string.about_notices, "NOTICE")) },
+                    Row(getString(R.string.about_license), value = { "Apache 2.0" }, info = madeBy, chevron = true) { push(legalPage(R.string.about_license, "LICENSE")) },
                 )
             },
         )
@@ -1222,6 +1224,29 @@ class SettingsActivity : Activity() {
             }
         }
     }
+
+    /**
+     * A legal text shipped in the app (the repo's NOTICE / LICENSE, copied in at build time). One
+     * focusable block per paragraph so the remote scrolls through it.
+     */
+    private fun legalPage(titleRes: Int, asset: String) = Page(
+        title = getString(titleRes),
+        hero = ::appIcon,
+        custom = { container ->
+            val text = runCatching { assets.open(asset).bufferedReader().use { it.readText() } }.getOrDefault("")
+            text.trim().split(Regex("\\n\\s*\\n")).forEach { para ->
+                container.addView(TextView(this).apply {
+                    this.text = para.trimEnd()
+                    setTextColor(0xE6FFFFFF.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_PX, 22 * pt)
+                    typeface = Typeface.MONOSPACE
+                    isFocusable = true
+                    val pad = (12 * pt).toInt(); setPadding(pad, pad, pad, pad)
+                    setOnFocusChangeListener { v, has -> v.setBackgroundColor(if (has) 0x1FFFFFFF else 0) }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+        },
+    )
 
     /**
      * Many TVs have no real browser, only Android TV's stub that silently does nothing: then show the

@@ -1,12 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- tvOS Screen Saver glyph (sun over two peaks and a path), traced with OpenCV from a tvOS Settings capture.
-     Frosted: 27% white over the backdrop, as measured. -->
+<!-- Prism's Screen Saver glyph (original): a framed landscape, sun over two rolling hills.
+     Frosted: 27% white over the backdrop, like the Settings badge. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="305dp"
-    android:height="241dp"
-    android:viewportWidth="305.3"
-    android:viewportHeight="240.8">
+    android:width="300dp"
+    android:height="240dp"
+    android:viewportWidth="300"
+    android:viewportHeight="240">
+    <!-- Frame: outer rounded rectangle minus the inner one. -->
     <path
         android:fillColor="#45FFFFFF"
-        android:pathData="M305.0,208.5 L303.5,201.5 L300.0,195.2 L212.8,71.2 L208.5,66.8 L203.8,63.8 L197.8,61.8 L190.2,61.5 L185.0,62.8 L181.0,64.5 L177.2,67.2 L174.5,70.0 L114.0,155.8 L113.2,155.5 L89.8,122.2 L86.2,119.2 L82.0,117.2 L79.5,116.8 L74.5,116.8 L70.2,118.0 L66.0,120.8 L61.0,127.0 L2.8,209.8 L0.2,215.2 L0.0,221.5 L1.5,226.5 L4.0,230.2 L7.0,233.0 L10.2,234.8 L16.8,236.2 L40.5,239.0 L65.2,240.5 L100.0,240.2 L124.5,238.2 L140.0,236.2 L143.8,235.2 L148.5,232.5 L152.5,227.8 L154.0,224.0 L154.5,221.0 L154.0,215.0 L152.8,211.8 L125.8,173.5 L125.8,172.0 L127.0,172.2 L177.8,196.5 L184.8,201.8 L190.5,208.2 L193.0,212.2 L195.5,217.8 L197.2,224.0 L197.8,227.8 L197.8,235.2 L196.8,239.8 L197.2,240.5 L219.8,240.2 L242.5,239.0 L270.8,236.0 L287.8,233.2 L290.8,232.2 L295.8,229.2 L300.8,223.8 L304.0,217.0 L304.8,213.5Z M94.0,0.0 L90.0,0.5 L83.0,2.8 L77.5,6.0 L73.0,10.0 L68.0,17.2 L65.8,23.2 L65.0,28.0 L65.0,34.5 L66.0,39.5 L68.5,45.8 L72.8,51.8 L76.8,55.5 L81.2,58.5 L86.8,60.8 L92.5,62.0 L98.8,62.0 L104.2,61.0 L110.5,58.5 L114.8,55.8 L119.2,51.5 L122.0,48.0 L124.8,42.8 L126.8,35.2 L127.0,29.8 L126.2,24.2 L124.2,18.2 L121.0,12.8 L116.8,8.0 L112.5,4.8 L106.5,1.8 L100.2,0.2Z" />
+        android:fillType="evenOdd"
+        android:pathData="M42,0H258A42,42 0 0 1 300,42V198A42,42 0 0 1 258,240H42A42,42 0 0 1 0,198V42A42,42 0 0 1 42,0Z M44,20A24,24 0 0 0 20,44V196A24,24 0 0 0 44,220H256A24,24 0 0 0 280,196V44A24,24 0 0 0 256,20Z" />
+    <!-- Sun. -->
+    <path
+        android:fillColor="#45FFFFFF"
+        android:pathData="M212,78m-26,0a26,26 0 1 0 52,0a26,26 0 1 0 -52,0" />
+    <!-- Hills, following the frame's inner bottom corners. -->
+    <path
+        android:fillColor="#45FFFFFF"
+        android:pathData="M30,170C76,118 122,116 160,158C188,132 236,124 270,160V196A14,14 0 0 1 256,210H44A14,14 0 0 1 30,196Z" />
 </vector>

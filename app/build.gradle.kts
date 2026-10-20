@@ -58,7 +58,16 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // The repo's LICENSE and NOTICE ship inside the app (About → Licenses), one source of truth.
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/legal").get().asFile)
 }
+
+val copyLegal by tasks.registering(Copy::class) {
+    from(rootProject.file("LICENSE"), rootProject.file("NOTICE"))
+    into(layout.buildDirectory.dir("generated/legal"))
+}
+tasks.named("preBuild") { dependsOn(copyLegal) }
 
 dependencies {
     implementation("androidx.recyclerview:recyclerview:1.4.0")

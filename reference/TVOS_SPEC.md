@@ -1,6 +1,6 @@
-# tvOS reference spec (from Apple HIG JSON, fetched 2026-10-18)
+# tvOS reference spec (notes from Apple's Human Interface Guidelines, read 2026-10-18)
 
-Source files: `reference/hig/*.json` (developer.apple.com/tutorials/data/design/human-interface-guidelines/*).
+Facts and numbers noted from developer.apple.com/design/human-interface-guidelines; the pages themselves are Apple's and are not kept in this repo.
 tvOS renders at 1920x1080 pt @1x, so 1 pt = 1 px on a 1080p TV.
 
 ## Layout
