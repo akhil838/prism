@@ -20,6 +20,7 @@
     <string name="avatar_failed">Couldn\'t download avatars. Check the internet connection.</string>
 
     <string name="settings">Settings</string>
+    <string name="general">General</string>
     <string name="appearance">Appearance</string>
     <string name="profile_picture_title">Profile Picture</string>
     <string name="apps">Apps</string>
@@ -155,8 +156,12 @@
     <string name="show_previews">Show Channel Previews</string>
 
     <string name="perf_quality">Quality</string>
-    <string name="perf_quality_info">Sets the effects below. Lower if Home stutters or restarts while you scroll.</string>
-    <string name="perf_quality_note">The video wallpaper, glass refraction and focus glow cost the most graphics work. If Home stutters or restarts while you scroll, choose a lower quality.</string>
+    <string name="perf_quality_info">Sets only the three effects under Set by Quality. The dock glass look is never changed by it.</string>
+    <string name="perf_quality_note">Quality sets Video Wallpaper, Refraction and Focus Glow: the effects that cost the most graphics work. If Home stutters or restarts while you scroll, choose a lower quality. The dock glass look (Blur, Dim, Gloss, Refraction Strength) stays as you set it.</string>
+    <string name="perf_section">Set by Quality</string>
+    <string name="glass_section">Dock Glass</string>
+    <string name="glass_section_info">How the dock glass looks. Quality presets never change these.</string>
+    <string name="appearance_reset_info">Quality back to Medium and the dock glass back to its tvOS look.</string>
     <string name="perf_refraction">Refraction</string>
     <string name="perf_low">Low</string>
     <string name="perf_medium">Medium</string>

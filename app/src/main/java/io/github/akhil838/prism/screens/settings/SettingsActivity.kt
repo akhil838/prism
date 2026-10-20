@@ -41,6 +41,7 @@ import io.github.akhil838.prism.data.DeviceInfo
 import io.github.akhil838.prism.data.DockStore
 import io.github.akhil838.prism.data.Wallpaper
 import io.github.akhil838.prism.data.Updates
+import io.github.akhil838.prism.media.Artwork
 import io.github.akhil838.prism.media.Frost
 import io.github.akhil838.prism.media.Sounds
 import io.github.akhil838.prism.screens.intro.IntroActivity
@@ -50,6 +51,7 @@ import io.github.akhil838.prism.screens.saver.ScreenSaverActivity
 import io.github.akhil838.prism.ui.components.DownloadBadge
 import io.github.akhil838.prism.ui.components.GlassBadge
 import io.github.akhil838.prism.ui.components.GlassGlyph
+import io.github.akhil838.prism.ui.components.TileArt
 import io.github.akhil838.prism.ui.components.GlassStyle
 import io.github.akhil838.prism.ui.components.glassStyle
 import io.github.akhil838.prism.ui.theme.Dims
@@ -141,7 +143,11 @@ class SettingsActivity : Activity() {
             setupShown = !isHome
             stack.addLast(if (isHome) rootPage() else setupPage())
             // Opened from Home's profile circle: straight to the profile picture page.
-            if (isHome && intent.getStringExtra(EXTRA_PAGE) == PAGE_PROFILE) { focusStack.addLast(4); stack.addLast(avatarStylesPage()) }
+            if (isHome && intent.getStringExtra(EXTRA_PAGE) == PAGE_PROFILE) {
+                // Back lands on its row in the root list.
+                focusStack.addLast(rootPage().rows().indexOfFirst { it.title == getString(R.string.profile_picture_title) }.coerceAtLeast(0))
+                stack.addLast(avatarStylesPage())
+            }
             render(0)
         } else {
             render(currentFocusIndex())
@@ -187,10 +193,10 @@ class SettingsActivity : Activity() {
         heroView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             outlineProvider = object : ViewOutlineProvider() {
-                // Concentric with tvOS tiles: corner = 13% of the short side, whatever the aspect;
-                // the frosted badge keeps its own rounder plate.
+                // Photo cards: corner = 13% of the short side (concentric with tvOS tiles). Frosted
+                // plates (badge, avatars, app icons): the rounder tvOS plate corner.
                 override fun getOutline(view: View, outline: Outline) {
-                    val k = if ((view as ImageView).drawable is GlassBadge) Constants.Hero.RADIUS else 0.13f
+                    val k = if (heroTile) Constants.Tile.RADIUS else if (heroPlated) Constants.Hero.RADIUS else 0.13f
                     outline.setRoundRect(0, 0, view.width, view.height, min(view.width, view.height) * k)
                 }
             }
@@ -274,16 +280,18 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * Photos, banners and avatars fill a rounded box shaped like the image (wallpapers and TV
-     * banners become rounded 16:9 cards). Vector/adaptive icons sit centred on a rounded plate;
-     * Prism's own [GlassBadge] is the plate. Only opaque images cast a shadow: through glass it shows.
+     * Photos and banners fill a rounded box shaped like the image (wallpapers and TV banners become
+     * rounded 16:9 cards) and cast a shadow. Anything see-through (transparent avatars, vector or
+     * adaptive app icons) sits on the same frosted plate as Prism's [GlassBadge], with no shadow:
+     * a shadow under a translucent plate shows through it as a dark frame.
      */
     private fun setHero(d: Drawable?) {
         heroView.setImageDrawable(d)
-        val glass = d is GlassBadge || d is GlassGlyph
-        heroView.elevation = if (glass) 0f else 18 * pt
         heroView.clipToOutline = d !is GlassGlyph // the glyph reaches the box corners
-        if (glass) {
+        heroTile = d is TileArt
+        if (d is GlassBadge || d is GlassGlyph) {
+            heroPlated = d is GlassBadge
+            heroView.elevation = 0f
             heroView.layoutParams = heroParams(if (d is GlassGlyph) d.intrinsicWidth / d.intrinsicHeight.toFloat() else 1f)
             heroView.scaleType = ImageView.ScaleType.FIT_XY
             heroView.background = null
@@ -291,21 +299,64 @@ class SettingsActivity : Activity() {
             heroView.invalidateOutline()
             return
         }
+        if (d is TileArt) {
+            // tvOS shows the app as its tile: 400 x 240 pt (fitted: 399 x 238 on a 1080p capture),
+            // corners as on the dock.
+            heroPlated = false
+            heroView.elevation = 18 * pt
+            heroView.layoutParams = tileHeroParams()
+            // Same as the Home tile (TileView.bind): banner cropped on black, icon padded on its plate colour.
+            val plate = d.plate
+            heroView.background = android.graphics.drawable.ColorDrawable(plate ?: Color.BLACK)
+            if (plate == null) {
+                heroView.scaleType = ImageView.ScaleType.CENTER_CROP
+                heroView.setPadding(0, 0, 0, 0)
+            } else {
+                heroView.scaleType = ImageView.ScaleType.FIT_CENTER
+                val pad = (heroView.layoutParams.height * Constants.Tile.ICON_PAD).toInt()
+                heroView.setPadding(pad, pad, pad, pad)
+            }
+            heroView.invalidateOutline()
+            return
+        }
         val bitmap = (d as? BitmapDrawable)?.bitmap
-        val plate = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0x59FFFFFF, 0x33FFFFFF))
-        if (bitmap != null && d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
-            heroView.layoutParams = heroParams(d.intrinsicWidth / d.intrinsicHeight.toFloat())
+        val opaque = bitmap != null && !bitmap.hasAlpha() && d.intrinsicWidth > 0 && d.intrinsicHeight > 0
+        heroPlated = !opaque
+        heroView.elevation = if (opaque) 18 * pt else 0f
+        if (opaque) {
+            heroView.layoutParams = heroParams(d!!.intrinsicWidth / d.intrinsicHeight.toFloat())
             heroView.scaleType = ImageView.ScaleType.CENTER_CROP
-            heroView.background = if (bitmap.hasAlpha()) plate else null // transparent avatars/icons get a plate
+            heroView.background = null
             heroView.setPadding(0, 0, 0, 0)
         } else {
             heroView.layoutParams = heroParams(1f)
-            heroView.scaleType = ImageView.ScaleType.FIT_CENTER
-            heroView.background = plate
-            val pad = (120 * pt).toInt()
-            heroView.setPadding(pad, pad, pad, pad)
+            heroView.background = android.graphics.drawable.ColorDrawable(((Constants.Hero.PLATE_ALPHA * 255).toInt() shl 24) or 0xFFFFFF)
+            if (bitmap != null) {
+                // Transparent avatar: fills the plate, like a profile picture.
+                heroView.scaleType = ImageView.ScaleType.CENTER_CROP
+                heroView.setPadding(0, 0, 0, 0)
+            } else {
+                // Vector / adaptive app icon: centred on the plate.
+                heroView.scaleType = ImageView.ScaleType.FIT_CENTER
+                val pad = (120 * pt).toInt()
+                heroView.setPadding(pad, pad, pad, pad)
+            }
         }
         heroView.invalidateOutline()
+    }
+
+    /** The hero is a frosted plate (rounder tvOS corner) rather than a photo card. */
+    private var heroPlated = true
+    /** The hero is an app tile: dock tile corners. */
+    private var heroTile = false
+
+    private fun tileHeroParams(): FrameLayout.LayoutParams {
+        val w = 400 * pt
+        val h = w * Constants.Tile.ASPECT_H / Constants.Tile.ASPECT_W
+        val cx = (254 + 270) * pt; val cy = (237 + 270) * pt
+        return FrameLayout.LayoutParams(w.toInt(), h.toInt()).apply {
+            leftMargin = (cx - w / 2).toInt(); topMargin = (cy - h / 2).toInt()
+        }
     }
 
     private fun updateFrost() = frostView.setImageBitmap(Frost.background(this))
@@ -429,33 +480,51 @@ class SettingsActivity : Activity() {
     private val badge = GlassBadge()
     private fun appIcon(): Drawable = badge
 
+    /** A top-level entry: name and › only. The root page shows no values, previews or captions (tvOS). */
+    private fun section(titleRes: Int, page: () -> Page) = Row(getString(titleRes), chevron = true) { push(page()) }
+
+    /**
+     * tvOS Settings root: one uniform list of sections, the app logo beside every one. Values,
+     * previews and details live on each section's own page.
+     */
     private fun rootPage() = Page(
         title = getString(R.string.settings),
         hero = ::appIcon,
         rows = {
             listOf(
-                Row(getString(R.string.appearance), hero = ::appIcon, chevron = true) { push(appearancePage()) },
+                section(R.string.general, ::generalPage),
+                section(R.string.appearance, ::appearancePage),
+                section(R.string.wallpaper, ::wallpaperPage),
+                section(R.string.screen_saver, ::screenSaverPage),
+                section(R.string.top_shelf, ::topShelfPage),
+                section(R.string.profile_picture_title, ::avatarStylesPage),
+                section(R.string.apps, ::appsPage),
+                section(R.string.system, ::systemPage),
+                section(R.string.about, ::aboutPage),
+            )
+        },
+    )
+
+    /** tvOS General: sounds and how Prism is set up as the TV's Home. */
+    private fun generalPage() = Page(
+        title = getString(R.string.general),
+        hero = ::appIcon,
+        rows = {
+            listOf(
                 Row(getString(R.string.sound_effects), value = { getString(if (store.sounds()) R.string.on else R.string.off) },
                     info = { getString(R.string.sound_effects_info) }) {
                     store.setSounds(!store.sounds()); Sounds.setEnabled(store.sounds()); refresh()
                 },
-                Row(getString(R.string.top_shelf), value = { getString(if (store.showReco() && Channels.allowed(this)) R.string.on else R.string.off) }, chevron = true) { push(topShelfPage()) },
-                Row(getString(R.string.wallpaper), value = { getString(if (Wallpaper.isSet(this)) R.string.on else R.string.off) },
-                    hero = { wallpaperHero() }, info = { currentInfo() }, chevron = true) { push(wallpaperPage()) },
-                Row(getString(R.string.screen_saver), value = { delayLabel(store.saverDelay()) }, chevron = true) { push(screenSaverPage()) },
-                Row(getString(R.string.profile_picture_title), hero = { avatarHero() }, chevron = true) { push(avatarStylesPage()) },
-                Row(getString(R.string.apps), chevron = true) { push(appsPage()) },
                 Row(getString(R.string.default_launcher), value = { getString(if (isDefaultHome()) R.string.on else R.string.off) }, chevron = true) { push(setupPage()) },
                 Row(getString(R.string.intro_run_again)) { startActivity(Intent(this, IntroActivity::class.java)) },
-                Row(getString(R.string.system), chevron = true) { push(systemPage()) },
-                Row(getString(R.string.about), value = { BuildConfigVersion.name(this) }, chevron = true) { push(aboutPage()) },
             )
         },
     )
 
     /**
-     * Appearance: the quality preset (one field: Low / Medium / High / Custom) and the three effects it
-     * sets, then the glass look. Changing an effect by hand switches the preset to Custom.
+     * Appearance, in two groups so it is clear what a preset touches: Quality and the three effects it
+     * sets (changing one by hand switches the preset to Custom), then the dock glass look, which no
+     * preset changes.
      */
     private fun appearancePage() = Page(
         title = getString(R.string.appearance),
@@ -463,26 +532,36 @@ class SettingsActivity : Activity() {
         rows = {
             val g = glassStyle
             fun custom(p: Perf) { store.setPerfCustom(p); perf = p; refresh() }
+            val glassInfo = { getString(R.string.glass_section_info) }
             listOf(
                 Row(getString(R.string.perf_quality), value = { presetName(store.perfPreset()) },
                     info = { getString(R.string.perf_quality_info) }, chevron = true) { push(qualityPage()) },
+                Row(getString(R.string.perf_section), header = true) {},
                 Row(getString(R.string.perf_video), value = { getString(if (perf.video) R.string.on else R.string.off) },
                     info = { getString(R.string.perf_video_info) }) { custom(perf.copy(video = !perf.video)) },
                 Row(getString(R.string.perf_refraction), value = { refractionName(perf.refraction) },
                     info = { getString(R.string.perf_refraction_info) }, chevron = true) { push(refractionPage()) },
                 Row(getString(R.string.perf_glow), value = { getString(if (perf.glow) R.string.on else R.string.off) },
                     info = { getString(R.string.perf_glow_info) }) { custom(perf.copy(glow = !perf.glow)) },
-                Row(getString(R.string.glass_blur), value = { levelName(glassStyle.blur) }, chevron = true) { push(levelPage(R.string.glass_blur, g.blur) { glassStyle.copy(blur = it) }) },
-                Row(getString(R.string.glass_dim), value = { levelName(glassStyle.dim) }, chevron = true) { push(levelPage(R.string.glass_dim, g.dim) { glassStyle.copy(dim = it) }) },
-                Row(getString(R.string.glass_gloss), value = { levelName(glassStyle.gloss) }, chevron = true) { push(levelPage(R.string.glass_gloss, g.gloss) { glassStyle.copy(gloss = it) }) },
-                Row(getString(R.string.glass_refraction), value = { levelName(glassStyle.refraction) }, chevron = true) { push(levelPage(R.string.glass_refraction, g.refraction) { glassStyle.copy(refraction = it) }) },
-                Row(getString(R.string.reset_default)) {
+                Row(getString(R.string.glass_section), header = true) {},
+                Row(getString(R.string.glass_blur), value = { levelName(glassStyle.blur) }, info = glassInfo, chevron = true) { push(levelPage(R.string.glass_blur, g.blur) { glassStyle.copy(blur = it) }) },
+                Row(getString(R.string.glass_dim), value = { levelName(glassStyle.dim) }, info = glassInfo, chevron = true) { push(levelPage(R.string.glass_dim, g.dim) { glassStyle.copy(dim = it) }) },
+                Row(getString(R.string.glass_gloss), value = { levelName(glassStyle.gloss) }, info = glassInfo, chevron = true) { push(levelPage(R.string.glass_gloss, g.gloss) { glassStyle.copy(gloss = it) }) },
+                Row(getString(R.string.glass_refraction), value = { levelName(glassStyle.refraction) }, info = glassInfo, chevron = true) { push(levelPage(R.string.glass_refraction, g.refraction) { glassStyle.copy(refraction = it) }) },
+                Row(getString(R.string.reset_default), info = { getString(R.string.appearance_reset_info) }) {
                     glassStyle = GlassStyle(); store.setGlass(glassStyle)
                     store.setPerfPreset(Perf.Preset.MEDIUM); perf = store.perf(); refresh()
                 },
             )
         },
     )
+
+    /** What a preset sets, spelled out: "Video Wallpaper: Off · Refraction: Off · Focus Glow: Off". */
+    private fun presetSummary(p: Perf): String = listOf(
+        getString(R.string.perf_video) to getString(if (p.video) R.string.on else R.string.off),
+        getString(R.string.perf_refraction) to refractionName(p.refraction),
+        getString(R.string.perf_glow) to getString(if (p.glow) R.string.on else R.string.off),
+    ).joinToString(" · ") { (k, v) -> "$k: $v" }
 
     private fun presetName(p: Perf.Preset) = getString(when (p) {
         Perf.Preset.LOW -> R.string.perf_low
@@ -509,7 +588,9 @@ class SettingsActivity : Activity() {
                 Perf.Preset.HIGH to R.string.perf_high_info,
                 Perf.Preset.CUSTOM to R.string.perf_custom_info,
             ).map { (p, info) ->
-                Row(presetName(p), value = { if (store.perfPreset() == p) "✓" else null }, info = { getString(info) }) {
+                // Each preset lists exactly what it sets (Custom: the current effects).
+                Row(presetName(p), value = { if (store.perfPreset() == p) "✓" else null },
+                    info = { getString(info) + "\n\n" + presetSummary(Perf.of(p) ?: perf) }) {
                     if (p == Perf.Preset.CUSTOM) store.setPerfCustom(perf) else store.setPerfPreset(p)
                     perf = store.perf(); pop()
                 }
@@ -1015,14 +1096,17 @@ class SettingsActivity : Activity() {
         rows = {
             AppRepository(this).load().map { app ->
                 Row(app.label, value = { getString(if (app.packageName in store.hidden()) R.string.hidden else R.string.shown) },
-                    hero = { app.banner ?: app.icon }, chevron = true) { push(appPage(app)) }
+                    hero = { appTile(app) }, chevron = true) { push(appPage(app)) }
             }
         },
     )
 
+    private fun appTile(app: AppEntry): Drawable? =
+        app.banner?.let { TileArt(it, null) } ?: app.icon?.let { TileArt(it, Artwork.plateColor(it)) }
+
     private fun appPage(app: AppEntry) = Page(
         title = app.label,
-        hero = { app.banner ?: app.icon },
+        hero = { appTile(app) },
         rows = {
             listOf(
                 Row(getString(if (app.packageName in store.hidden()) R.string.show_on_home else R.string.hide_from_home)) {
