@@ -24,7 +24,6 @@ import io.github.akhil838.prism.data.Aerials
 import io.github.akhil838.prism.data.DockStore
 import io.github.akhil838.prism.media.Frost
 import io.github.akhil838.prism.media.Sounds
-import io.github.akhil838.prism.ui.components.DownloadBadge
 import io.github.akhil838.prism.ui.theme.designScale
 
 /**
@@ -206,19 +205,9 @@ class ChooseAerialsActivity : Activity() {
             setShadowLayer(10 * pt, 0f, 2 * pt, Color.BLACK)
             elevation = 7 * pt
         }
-        // Download circle: outline = streams from Apple, filled = stored on this TV.
-        val badge = DownloadBadge().apply { state = if (Aerials.localFile(this@ChooseAerialsActivity, a) != null) DownloadBadge.State.LOCAL else DownloadBadge.State.REMOTE }
-        val badgeSize = (40 * pt).toInt()
         val frame = FrameLayout(this).apply {
             addView(thumb, FrameLayout.LayoutParams(w, h))
             addView(hidden, FrameLayout.LayoutParams(w, h))
-            if (badge.state != DownloadBadge.State.LOCAL) addView(ImageView(this@ChooseAerialsActivity).apply {
-                setImageDrawable(badge); elevation = 8 * pt
-                // Soft dark disc so the white outline reads on bright snapshots.
-                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x59000000) }
-            }, FrameLayout.LayoutParams(badgeSize, badgeSize, Gravity.TOP or Gravity.END).apply {
-                topMargin = (12 * pt).toInt(); rightMargin = (12 * pt).toInt()
-            })
         }
         val name = TextView(this).apply {
             text = a.title

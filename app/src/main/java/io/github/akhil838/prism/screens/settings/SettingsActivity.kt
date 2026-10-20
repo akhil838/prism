@@ -31,6 +31,7 @@ import io.github.akhil838.prism.BuildConfig
 import io.github.akhil838.prism.R
 import io.github.akhil838.prism.core.Constants
 import io.github.akhil838.prism.core.Perf
+import io.github.akhil838.prism.core.UiWork
 import io.github.akhil838.prism.core.perf
 import io.github.akhil838.prism.data.Aerials
 import io.github.akhil838.prism.data.AppEntry
@@ -51,6 +52,7 @@ import io.github.akhil838.prism.screens.saver.ScreenSaverActivity
 import io.github.akhil838.prism.ui.components.DownloadBadge
 import io.github.akhil838.prism.ui.components.GlassBadge
 import io.github.akhil838.prism.ui.components.GlassGlyph
+import io.github.akhil838.prism.ui.components.Shimmer
 import io.github.akhil838.prism.ui.components.TileArt
 import io.github.akhil838.prism.ui.components.GlassStyle
 import io.github.akhil838.prism.ui.components.glassStyle
@@ -222,7 +224,11 @@ class SettingsActivity : Activity() {
         }
         scroll = ScrollView(this).apply {
             isVerticalScrollBarEnabled = false
+            // Clipped to its own box: scrolled content must not slide up under the page title. The
+            // list's padding leaves room for focused rows and thumbnails to grow inside it.
             clipChildren = false
+            outlineProvider = ViewOutlineProvider.BOUNDS
+            clipToOutline = true
             clipToPadding = false
             isFillViewport = false
             addView(list)
@@ -286,8 +292,27 @@ class SettingsActivity : Activity() {
      * a shadow under a translucent plate shows through it as a dark frame.
      */
     private fun setHero(d: Drawable?) {
+        // Replacing a loading placeholder: the image fades and settles in instead of popping.
+        val fromPlaceholder = heroView.drawable is Shimmer && d !is Shimmer && d != null
         heroView.setImageDrawable(d)
         heroView.clipToOutline = d !is GlassGlyph // the glyph reaches the box corners
+        heroView.animate().cancel()
+        if (fromPlaceholder) {
+            heroView.alpha = 0f; heroView.scaleX = 0.97f; heroView.scaleY = 0.97f
+            heroView.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260)
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        } else { heroView.alpha = 1f; heroView.scaleX = 1f; heroView.scaleY = 1f }
+        if (d is Shimmer) {
+            // Same card the photo will fill, so nothing jumps when it arrives.
+            heroTile = false; heroPlated = false
+            heroView.elevation = 0f
+            heroView.layoutParams = heroParams(d.intrinsicWidth / d.intrinsicHeight.toFloat())
+            heroView.scaleType = ImageView.ScaleType.FIT_XY
+            heroView.background = null
+            heroView.setPadding(0, 0, 0, 0)
+            heroView.invalidateOutline()
+            return
+        }
         heroTile = d is TileArt
         if (d is GlassBadge || d is GlassGlyph) {
             heroPlated = d is GlassBadge
@@ -422,11 +447,20 @@ class SettingsActivity : Activity() {
             }.also { cell.addView(it, LinearLayout.LayoutParams((34 * pt).toInt(), (34 * pt).toInt()).apply { rightMargin = (18 * pt).toInt() }) }
         }
         cell.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        cell.addView(value)
+        // The selection mark: tvOS's thin grey checkmark (vector), not the font's "✓" glyph. It sits in
+        // the row's right-hand icon slot, so on download rows it takes the badge's place.
+        val checked = value.text == "✓"
+        val check = if (!checked) null else ImageView(this).apply {
+            setImageResource(R.drawable.ic_check)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            imageTintList = android.content.res.ColorStateList.valueOf(SECONDARY)
+        }
+        if (check == null) cell.addView(value)
         // Choice rows (value is a ✓ / ↓ / … marker) act immediately: no "opens a page" arrow.
         val icon = row.icon?.invoke()
-        if (icon != null) cell.addView(ImageView(this).apply { setImageDrawable(icon) },
-            LinearLayout.LayoutParams((34 * pt).toInt(), (34 * pt).toInt()).apply { leftMargin = (14 * pt).toInt() })
+        val slot = { LinearLayout.LayoutParams((34 * pt).toInt(), (34 * pt).toInt()).apply { leftMargin = (14 * pt).toInt() } }
+        if (check != null) cell.addView(check, slot())
+        else if (icon != null) cell.addView(ImageView(this).apply { setImageDrawable(icon) }, slot())
         if (row.chevron) cell.addView(chevron, LinearLayout.LayoutParams((20 * pt).toInt(), (34 * pt).toInt()).apply {
             leftMargin = (16 * pt).toInt(); rightMargin = (10 * pt).toInt()
         }) else value.setPadding(0, 0, (8 * pt).toInt(), 0)
@@ -437,6 +471,7 @@ class SettingsActivity : Activity() {
             glyph?.imageTintList = android.content.res.ColorStateList.valueOf(if (has) 0xFF1C1C1E.toInt() else Color.WHITE)
             value.setTextColor(if (has) 0xFF6E6A75.toInt() else SECONDARY)
             chevron.imageTintList = android.content.res.ColorStateList.valueOf(if (has) 0xFF8C8C8C.toInt() else SECONDARY)
+            check?.imageTintList = android.content.res.ColorStateList.valueOf(if (has) 0xFF8C8C8C.toInt() else SECONDARY)
             (icon as? DownloadBadge)?.focused = has
             v.animate().scaleX(if (has) 1.015f else 1f).scaleY(if (has) 1.04f else 1f)
                 .setDuration(150).start()
@@ -657,16 +692,16 @@ class SettingsActivity : Activity() {
 
     private fun delayLabel(min: Int) = if (min == 0) getString(R.string.saver_never) else getString(R.string.saver_minutes, min)
 
-    /** Category preview still from Apple's feed (downloaded once, ~960x540); app icon until it arrives. */
+    /** Category preview still from Apple's feed (downloaded once, ~960x540); a shimmer until it arrives. */
     private fun aerialHero(categoryId: String?): Drawable {
         val feed = aerialFeed ?: return appIcon()
         val cat = feed.category(categoryId) ?: feed.categories.firstOrNull() ?: return appIcon()
         val url = cat.preview ?: return appIcon()
         aerialPreviews[url]?.let { return it }
         aerialPlaceholders[url]?.let { return it }
-        val placeholder = appIcon().also { aerialPlaceholders[url] = it }
+        val placeholder = Shimmer().also { aerialPlaceholders[url] = it }
         Avatar.fetch(url) { bytes ->
-            if (bytes == null) return@fetch
+            if (bytes == null) { aerialPlaceholders.remove(url); if (heroView.drawable === placeholder) setHero(appIcon()); return@fetch }
             val bm = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply {
                 inSampleSize = 2; inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
             }) ?: return@fetch
@@ -683,18 +718,18 @@ class SettingsActivity : Activity() {
     /** Aerial whose snapshot the hero is waiting for; a late load for any other row is dropped. */
     private var wantedThumb: String? = null
 
-    /** This aerial's own Apple snapshot; its category image until the snapshot arrives. */
+    /** This aerial's own Apple snapshot; a shimmer until it arrives (its category still if it can't). */
     private fun aerialThumbHero(a: Aerials.Aerial, c: Aerials.Category): Drawable {
         wantedThumb = a.id
         var returned = false
         var cached: Drawable? = null
         Aerials.thumb(this, a, c.preview, (540 * pt).toInt()) { bm ->
-            val d = bm?.let { BitmapDrawable(resources, it) } ?: return@thumb
+            val d = bm?.let { BitmapDrawable(resources, it) } ?: aerialHero(c.id)
             if (!returned) cached = d // memory hit: delivered synchronously, just return it
             else if (wantedThumb == a.id) setHero(d) // arrived later: swap in if the row is still focused
         }
         returned = true
-        return cached ?: aerialHero(c.id)
+        return cached ?: Shimmer()
     }
 
     /** tvOS Screen Saver hero: the frosted mountains glyph, no plate. */
@@ -947,66 +982,175 @@ class SettingsActivity : Activity() {
         title = getString(R.string.wallpaper),
         hero = { wallpaperHero() },
         rows = {
-            listOf(
-                Row(getString(R.string.wallpaper_gallery), info = { currentInfo() }, chevron = true) { push(galleryPage()) },
+            val rows = mutableListOf<Row>(Row(getString(R.string.wp_header_collections), header = true) {})
+            Wallpaper.Category.values().forEach { cat ->
+                rows += Row(getString(cat.title), value = { Wallpaper.PHOTOS[cat]!!.size.toString() }, info = { currentInfo() }, chevron = true) { push(photoCategoryPage(cat)) }
+            }
+            rows += listOf(
+                Row(getString(R.string.wp_animated), value = { Wallpaper.CLIPS.size.toString() }, info = { getString(R.string.wallpaper_videos_info) }, chevron = true) { push(videoGalleryPage()) },
                 Row(getString(R.string.wallpaper_aerials), hero = { aerialHero(null) }, info = { getString(R.string.aerial_info) }, chevron = true) { push(aerialCategoriesPage()) },
+                Row(getString(R.string.wp_header_yours), header = true) {},
                 Row(getString(R.string.wallpaper_local), value = { Wallpaper.localFiles(this).size.toString() }, info = { currentInfo() }, chevron = true) { push(localWallpaperPage()) },
                 Row(getString(R.string.wallpaper_none), value = { if (!Wallpaper.isSet(this)) "✓" else null }, info = { currentInfo() }) {
                     Wallpaper.clear(this); wallpaperChanged(); refresh()
                 },
             )
+            rows
         },
     )
 
-    /** Curated Lorem Picsum photos: thumbnails in a grid, full 1920x1080 downloaded on pick. */
-    private fun galleryPage() = Page(
-        title = getString(R.string.wallpaper_gallery),
+    /** The size full photos are fetched at: the screen's own (1920x1080 on most TVs, up to 4K). */
+    private fun screenSize(): Pair<Int, Int> {
+        val b = windowManager.currentWindowMetrics.bounds
+        val w = maxOf(b.width(), b.height()).coerceIn(1280, 3840)
+        return w to w * 9 / 16
+    }
+
+    /**
+     * One photo category: thumbnails in a grid, the full photo downloaded at screen size on pick.
+     */
+    private fun photoCategoryPage(cat: Wallpaper.Category) = Page(
+        title = getString(cat.title),
         hero = { wallpaperHero() },
         custom = { container ->
             val w = (240 * pt).toInt(); val h = w * 9 / 16; val gap = (16 * pt).toInt()
-            val grid = GridLayout(this).apply { columnCount = 3; clipChildren = false }
-            for (id in Wallpaper.GALLERY) {
-                val bg = GradientDrawable().apply { cornerRadius = 18 * pt; setColor(UNFOCUSED) }
-                val cell = ImageView(this).apply {
-                    isFocusable = true; isClickable = true
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    background = bg
-                    outlineProvider = object : ViewOutlineProvider() {
-                        override fun getOutline(view: View, outline: Outline) = outline.setRoundRect(0, 0, view.width, view.height, 18 * pt)
-                    }
-                    clipToOutline = true
-                    setOnFocusChangeListener { v, has ->
-                        v.animate().scaleX(if (has) 1.1f else 1f).scaleY(if (has) 1.1f else 1f).setDuration(150).start()
-                        if (has) {
-                            (drawable as? BitmapDrawable)?.let { setHero(it) }
-                            showPicsumInfo(id, v)
+            var first: View? = null
+            run {
+                val ids = Wallpaper.PHOTOS[cat]!!
+                val grid = GridLayout(this).apply { columnCount = 3; clipChildren = false }
+                for (id in ids) {
+                    val cell = galleryCell { has, v -> if (has) showPicsumInfo(id, v) }
+                    if (first == null) first = cell
+                    grid.addView(cell, GridLayout.LayoutParams().apply { width = w; height = h; setMargins(gap / 2, gap / 2, gap / 2, gap / 2) })
+                    // Thumbnails at cell size, RGB_565: 32 of them stay ~3 MB on the TV.
+                    Avatar.fetch(Wallpaper.url(id, 288, 162)) { bytes ->
+                        if (bytes == null) { cell.setImageDrawable(null); return@fetch }
+                        val thumb = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+                            android.graphics.BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 })
+                        cell.setImageDrawable(BitmapDrawable(resources, thumb))
+                        fadeIn(cell)
+                        if (cell.isFocused) setHero(cell.drawable) // focused before its thumbnail arrived
+                        cell.setOnClickListener {
+                            Toast.makeText(this, R.string.wallpaper_downloading, Toast.LENGTH_SHORT).show()
+                            val page = stack.last()
+                            val (sw, sh) = screenSize()
+                            Avatar.fetch(Wallpaper.url(id, sw, sh)) { full ->
+                                if (isDestroyed) return@fetch
+                                if (full == null) { Toast.makeText(this, R.string.avatar_failed, Toast.LENGTH_LONG).show(); return@fetch }
+                                Wallpaper.save(this, full); wallpaperChanged()
+                                // The download can take seconds: leave the gallery only if the user is still on it.
+                                if (stack.lastOrNull() === page) { focusStack.addLast(0); pop() }
+                            }
                         }
                     }
                 }
-                grid.addView(cell, GridLayout.LayoutParams().apply { width = w; height = h; setMargins(gap / 2, gap / 2, gap / 2, gap / 2) })
-                Avatar.fetch(Wallpaper.url(id, 480, 270)) { bytes ->
-                    if (bytes == null) return@fetch
-                    // Thumbnails are opaque photos: RGB_565 halves their memory.
-                    val thumb = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
-                        android.graphics.BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 })
-                    cell.setImageDrawable(BitmapDrawable(resources, thumb))
-                    cell.setOnClickListener {
-                        Toast.makeText(this, R.string.wallpaper_downloading, Toast.LENGTH_SHORT).show()
-                        val page = stack.last()
-                        Avatar.fetch(Wallpaper.url(id, 1920, 1080)) { full ->
-                            if (isDestroyed) return@fetch
-                            if (full == null) { Toast.makeText(this, R.string.avatar_failed, Toast.LENGTH_LONG).show(); return@fetch }
-                            Wallpaper.save(this, full); wallpaperChanged()
-                            // The download can take seconds: leave the gallery only if the user is still on it.
-                            if (stack.lastOrNull() === page) { focusStack.addLast(0); pop() }
-                        }
-                    }
-                }
+                container.addView(grid)
             }
-            container.addView(grid)
-            grid.post { grid.getChildAt(0)?.requestFocus() }
+            container.post { first?.requestFocus() }
         },
     )
+
+    /** Small caps label above a gallery section (tvOS section header style). */
+    private fun sectionHeader(text: String) = TextView(this).apply {
+        this.text = text.uppercase()
+        setTextColor(SECONDARY)
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, 24 * pt)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        letterSpacing = 0.04f
+        setPadding((10 * pt).toInt(), (22 * pt).toInt(), 0, (6 * pt).toInt())
+    }
+
+    /** A rounded thumbnail (shimmering until it loads) that grows on focus and shows itself as the hero. */
+    private fun galleryCell(onFocus: (Boolean, View) -> Unit) = ImageView(this).apply {
+        isFocusable = true; isClickable = true
+        scaleType = ImageView.ScaleType.CENTER_CROP
+        background = GradientDrawable().apply { cornerRadius = 18 * pt; setColor(UNFOCUSED) }
+        outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) = outline.setRoundRect(0, 0, view.width, view.height, 18 * pt)
+        }
+        clipToOutline = true
+        setImageDrawable(Shimmer())
+        setOnFocusChangeListener { v, has ->
+            v.animate().scaleX(if (has) 1.1f else 1f).scaleY(if (has) 1.1f else 1f).setDuration(150).start()
+            if (has) setHero((drawable as? BitmapDrawable) ?: Shimmer())
+            onFocus(has, v)
+        }
+    }
+
+    /** A loaded thumbnail replaces its shimmer by fading up, not popping in. */
+    private fun fadeIn(v: View) {
+        v.alpha = 0.2f
+        v.animate().alpha(1f).setDuration(220).start()
+    }
+
+    private val clipBadges = HashMap<String, DownloadBadge>()
+    private fun clipBadge(c: Wallpaper.Clip) = clipBadges.getOrPut(c.name) {
+        DownloadBadge().apply { state = if (Wallpaper.clipFile(this@SettingsActivity, c)?.exists() == true) DownloadBadge.State.LOCAL else DownloadBadge.State.REMOTE }
+    }
+
+    /** Clip posters for the hero, by URL; bounded like the other previews. */
+    private val clipPosters = lru<Drawable>(4)
+    /** The poster the focused row is waiting for; late loads for other rows are dropped. */
+    private var wantedPoster: String? = null
+
+    private fun clipHero(c: Wallpaper.Clip): Drawable {
+        wantedPoster = c.poster
+        clipPosters[c.poster]?.let { return it }
+        Avatar.fetch(c.poster) { bytes ->
+            if (bytes == null) { if (wantedPoster == c.poster && !isDestroyed) setHero(wallpaperHero() ?: appIcon()); return@fetch }
+            val bm = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+                android.graphics.BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 }) ?: return@fetch
+            val d = BitmapDrawable(resources, bm)
+            clipPosters[c.poster] = d
+            if (wantedPoster == c.poster && !isDestroyed) setHero(d) // still the focused row
+        }
+        return Shimmer()
+    }
+
+    /**
+     * Short video loops (public domain / CC0, Wikimedia Commons) in Dark and Light sections; picking
+     * one downloads it once (2-15 MB, 1080p VP9) and makes it the video wallpaper.
+     */
+    private fun videoGalleryPage(): Page {
+        lateinit var page: Page
+        page = Page(
+            title = getString(R.string.wp_animated),
+            hero = { wallpaperHero() },
+            rows = {
+                Wallpaper.ClipGroup.values().flatMap { group ->
+                    listOf(Row(getString(group.title), header = true) {}) +
+                        Wallpaper.CLIPS.filter { it.group == group }.map { c ->
+                            val f = Wallpaper.clipFile(this, c)
+                            Row(c.name,
+                                value = { if (f != null && f.path == Wallpaper.videoPath(this)) "✓" else getString(R.string.clip_size, c.mb) },
+                                icon = { clipBadge(c) },
+                                hero = { clipHero(c) },
+                                info = { downloadPct[c.name]?.let { getString(R.string.aerial_download, it) } ?: getString(R.string.clip_credit, c.author, c.license) }) {
+                                f ?: return@Row
+                                if (f.exists()) { Wallpaper.saveFrom(this, f); wallpaperChanged(); refresh(); return@Row }
+                                if (!downloading.add(c.name)) return@Row
+                                downloadPct[c.name] = 0
+                                setInfo(getString(R.string.aerial_download, 0))
+                                clipBadge(c).state = DownloadBadge.State.LOADING
+                                Aerials.download(c.url, f, progress = { pct ->
+                                    if (pct < 0) return@download
+                                    clipBadge(c).progress = pct; downloadPct[c.name] = pct
+                                    if (stack.lastOrNull() === page && wantedPoster == c.poster) setInfo(getString(R.string.aerial_download, pct))
+                                }, headers = mapOf("User-Agent" to "Prism/${BuildConfigVersion.name(this)} (https://github.com/akhil838/prism)")) { file ->
+                                    downloading.remove(c.name); downloadPct.remove(c.name)
+                                    clipBadge(c).state = if (file != null) DownloadBadge.State.LOCAL else DownloadBadge.State.REMOTE
+                                    if (file == null) { Toast.makeText(this, R.string.aerial_download_failed, Toast.LENGTH_LONG).show(); return@download }
+                                    Wallpaper.saveFrom(this, file); wallpaperChanged()
+                                    Toast.makeText(this, getString(R.string.aerial_set, c.name), Toast.LENGTH_SHORT).show()
+                                    if (stack.lastOrNull() === page) refresh()
+                                }
+                            }
+                        }
+                }
+            },
+        )
+        return page
+    }
 
     /** "Original 3914×2935 · Photo by … · Sets 1920×1080 JPEG", fetched once per photo. */
     private fun showPicsumInfo(id: Int, cell: View) {
@@ -1071,16 +1215,20 @@ class SettingsActivity : Activity() {
                     setOnFocusChangeListener { v, has ->
                         bg.setColor(if (has) Color.WHITE else UNFOCUSED)
                         v.animate().scaleX(if (has) 1.15f else 1f).scaleY(if (has) 1.15f else 1f).setDuration(150).start()
-                        if (has) (drawable as? BitmapDrawable)?.let { setHero(it) }
+                        if (has) setHero((drawable as? BitmapDrawable) ?: Shimmer(1f))
                     }
+                    setImageDrawable(Shimmer(1f, oval = true))
                 }
                 grid.addView(cell, GridLayout.LayoutParams().apply { width = size; height = size; setMargins(gap / 2, gap / 2, gap / 2, gap / 2) })
                 Avatar.fetch(Avatar.url(styleId, seed, size = 256)) { bytes ->
                     if (bytes == null) {
+                        cell.setImageDrawable(null)
                         if (++failed == 1) Toast.makeText(this, R.string.avatar_failed, Toast.LENGTH_LONG).show()
                         return@fetch
                     }
                     cell.setImageDrawable(BitmapDrawable(resources, android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)))
+                    fadeIn(cell)
+                    if (cell.isFocused) setHero(cell.drawable)
                     cell.setOnClickListener { Avatar.save(this, bytes); store.bump(); focusStack.addLast(0); pop() }
                 }
             }

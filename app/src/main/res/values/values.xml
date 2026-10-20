@@ -123,15 +123,27 @@
     <string name="update_info">Prism %1$s is available (%2$s). Press to download and install it; your settings are kept.</string>
 
     <string name="wallpaper">Wallpaper</string>
-    <string name="wallpaper_gallery">Photo Gallery</string>
+    <string name="wp_header_collections">Collections</string>
+    <string name="wp_header_yours">Your Own</string>
+    <string name="wp_nature">Nature</string>
+    <string name="wp_minimal">Minimalist</string>
+    <string name="wp_night">Night &amp; Space</string>
+    <string name="wp_city">Cities &amp; Architecture</string>
+    <string name="wp_animated">Nature Videos</string>
+    <string name="wp_clips_night">Night</string>
+    <string name="wp_clips_sky">Sky &amp; Clouds</string>
+    <string name="wp_clips_water">Water &amp; Snow</string>
+    <string name="wallpaper_videos_info">Short moving wallpapers (public domain and CC0, from Wikimedia Commons). Each is 2–15 MB and downloads once.</string>
+    <string name="clip_size">%.0f MB</string>
+    <string name="clip_credit">By %1$s · %2$s · Wikimedia Commons</string>
     <string name="wallpaper_local">From TV Storage</string>
     <string name="wallpaper_none">None (App Artwork)</string>
     <string name="wallpaper_downloading">Downloading wallpaper…</string>
     <string name="wallpaper_local_note">Copy photos (JPG, PNG, WebP) or videos (MP4, WebM, MKV) to:\n%1$s\n\nFor example: adb push clip.mp4 %1$s/\nVideos play muted and loop, and pause while another app is open.</string>
     <string name="current_prefix">Current: %1$s</string>
     <string name="loading">Loading details…</string>
-    <string name="gallery_info">Original %1$d×%2$d · Photo by %3$s (Unsplash)\nSaved as 1920×1080 (1080p) JPEG</string>
-    <string name="gallery_info_short">Unsplash photo · saved as 1920×1080 (1080p) JPEG</string>
+    <string name="gallery_info">Original %1$d×%2$d · Photo by %3$s (Unsplash)\nSaved at your screen\'s size</string>
+    <string name="gallery_info_short">Unsplash photo · saved at your screen\'s size</string>
 
     <string name="intro_welcome_title">Welcome to Prism</string>
     <string name="intro_welcome_body">A fast, ad-free Home screen for your TV, inspired by Apple TV: a glass dock, a Top Shelf with each app\'s picks, and your own wallpapers.\n\nThis takes a minute: one step per screen.</string>

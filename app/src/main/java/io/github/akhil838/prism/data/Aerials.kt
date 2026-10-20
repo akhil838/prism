@@ -287,15 +287,18 @@ object Aerials {
 
     /**
      * Downloads [url] to [dest] (via a .part file); [progress] gets 0-100 and [done] the file or
-     * null, both on the main thread. Used for aerial wallpapers (~170-290 MB per clip).
+     * null, both on the main thread. Used for aerial wallpapers (~170-290 MB per clip) and gallery
+     * video clips; [headers] are added to the request (Wikimedia asks clients to identify themselves).
      */
-    fun download(url: String, dest: File, progress: (Int) -> Unit, done: (File?) -> Unit) {
+    fun download(url: String, dest: File, progress: (Int) -> Unit, headers: Map<String, String> = emptyMap(), done: (File?) -> Unit) {
         Thread {
             val part = File(dest.path + ".part")
             val ok = runCatching {
                 (URL(url).openConnection() as HttpURLConnection).run {
                     connectTimeout = 10_000; readTimeout = 30_000
+                    headers.forEach { (k, v) -> setRequestProperty(k, v) }
                     try {
+                        if (responseCode !in 200..299) error("HTTP $responseCode")
                         val total = contentLengthLong
                         var got = 0L; var last = -1
                         inputStream.use { input -> part.outputStream().use { out ->

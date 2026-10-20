@@ -48,8 +48,18 @@ Fetched while the app runs (not bundled):
 * Gallery photos: Unsplash photographers, served by Lorem Picsum (https://picsum.photos)
   Unsplash License - https://unsplash.com/license
 
+* Video wallpapers (Wallpaper -> Video Gallery): Wikimedia Commons, public domain or CC0 only,
+  downloaded on request as Commons' 1080p transcodes:
+  Fritzchens Fritz (CC0): Aurora in Fog
+  Joshua Tree National Park, U.S. National Park Service (public domain): Milky Way, Oasis of Mara;
+    Moonrise, Joshua Tree; Stars over Headstone Rock; Dusk to Night; Evening Clouds;
+    Hidden Valley Sunset; Desert Clouds
+  BLM Oregon & Washington, U.S. Bureau of Land Management (public domain): Waves at Cattle Point
+  Extemporalist (CC0): Canyon Clouds; Snowy Creek; Freezing Fog
+  Роман Рябенко (CC0): Snow and Sky
+
 * Aerial videos, previews and place names: Apple Inc., streamed from Apple's servers. They are
   Apple's content; Prism does not include or redistribute them and grants no rights to them.
 
-Prism's own artwork (app icon, Settings badge, Screen Saver glyph, chevrons) and sound effects
+Prism's own artwork (app icon, Settings badge, chevrons) and sound effects
 were made for Prism and are covered by the Apache License 2.0.

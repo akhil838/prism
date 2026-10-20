@@ -50,6 +50,7 @@ import io.github.akhil838.prism.ui.components.AppMenu
 import io.github.akhil838.prism.ui.components.CellView
 import io.github.akhil838.prism.ui.components.ControlStrip
 import io.github.akhil838.prism.ui.components.GlassView
+import io.github.akhil838.prism.ui.components.Shimmer
 import io.github.akhil838.prism.ui.components.TileView
 import io.github.akhil838.prism.ui.components.glassStyle
 import io.github.akhil838.prism.ui.theme.Dims
@@ -184,7 +185,6 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         super.onStart()
         started = true
         requestPlayer()
-        if (loadingCards.isNotEmpty()) startPulse()
         // Back on Home from an app: once the return has settled, ask Android to drop other apps'
         // cached processes (see freeMemory).
         main.removeCallbacks(freeMemory)
@@ -222,7 +222,6 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         started = false
         releasePlayer()
         main.removeCallbacks(freeMemory)
-        stopPulse()
         super.onStop()
     }
 
@@ -1132,43 +1131,6 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         recoRow.removeAllViews()
         cardArt.clear()
         cardLoads.clear()
-        loadingCards.clear()
-        stopPulse()
-    }
-
-    /** Cards whose image is on its way: they pulse softly ([pulse]) until it arrives. */
-    private val loadingCards = HashSet<ImageView>()
-
-    /**
-     * The loading pulse, stepped at ~5 frames a second rather than animated at 60: on the TCL every
-     * frame Home changes costs two full-screen GPU passes (Home's own, and SurfaceFlinger's, which
-     * composites every app window on the GPU there), so a 60 fps pulse slowed the whole TV while
-     * card art loaded. Only recolours the placeholders: no layers, no bitmaps.
-     */
-    private val pulse = object : Runnable {
-        private var step = 0
-        override fun run() {
-            if (loadingCards.isEmpty()) return
-            step = (step + 1) % PULSE_ALPHAS.size
-            val c = (PULSE_ALPHAS[step] shl 24) or 0x00FFFFFF
-            for (card in loadingCards) card.setBackgroundColor(c)
-            main.postDelayed(this, PULSE_STEP_MS)
-        }
-    }
-
-    private fun startPulse() { main.removeCallbacks(pulse); main.postDelayed(pulse, PULSE_STEP_MS) }
-    private fun stopPulse() = main.removeCallbacks(pulse)
-
-    private fun cardLoading(card: ImageView) {
-        val first = loadingCards.isEmpty()
-        loadingCards += card
-        if (first && started) startPulse()
-    }
-
-    private fun cardLoaded(card: ImageView) {
-        if (!loadingCards.remove(card)) return
-        card.setBackgroundColor(CARD_PLACEHOLDER)
-        if (loadingCards.isEmpty()) stopPulse()
     }
 
     private fun buildCards(items: List<Program>, pkg: String) {
@@ -1225,12 +1187,12 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
             total += w + if (i > 0) gap else 0
             cardLoads += p.image?.let { uri ->
                 {
-                    cardLoading(card)
+                    // Shimmers in the card's own shape until the art arrives (see SHELF_SHIMMER_MS).
+                    card.setImageDrawable(Shimmer(w / h.toFloat(), frameMs = SHELF_SHIMMER_MS))
                     Channels.image(this, uri, w, tag = pkg) { bm ->
                         // Arrived for a shelf that is gone (released or rebuilt): never shown, free it.
                         if (gen != shelfGen || recoFor != pkg) { bm?.recycle(); return@image }
-                        cardLoaded(card)
-                        if (bm == null) return@image
+                        if (bm == null) { card.setImageDrawable(null); return@image }
                         Diag.bitmap("card ${p.title}", bm)
                         card.setImageBitmap(bm)
                         cardArt[p] = bm
@@ -1555,10 +1517,13 @@ class HomeActivity : Activity(), HomeAdapter.Listener {
         const val REVEAL_TIMEOUT_MS = 900L
         /** Dock <-> grid frost fade (see setGridMode). */
         const val FROST_FADE_MS = 200L
-        /** Loading pulse: placeholder alphas, one step every [PULSE_STEP_MS] (~5 fps, ~1.1 s a cycle). */
-        val PULSE_ALPHAS = intArrayOf(0x1A, 0x22, 0x2C, 0x36, 0x2C, 0x22)
-        const val PULSE_STEP_MS = 180L
-        /** Card placeholder colour (and the rest colour of its loading pulse). */
+        /**
+         * Shelf loading shimmer frame interval (~12 fps, not 60): on the TCL every frame Home changes
+         * costs two full-screen GPU passes (Home's and SurfaceFlinger's), so a 60 fps sweep slowed the
+         * whole TV while card art loaded. It stops by itself once the art replaces it.
+         */
+        const val SHELF_SHIMMER_MS = 83L
+        /** Card placeholder colour, under the loading shimmer. */
         const val CARD_PLACEHOLDER = 0x26FFFFFF
         val SCROLL_EASE = DecelerateInterpolator(2f)
     }

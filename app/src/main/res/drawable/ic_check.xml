@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings selection checkmark (fitted on a tvOS capture: ~32 x 31 pt, ~4.5 pt stroke, round caps,
+     short arm down to a vertex at 38% of the width). Tinted in code. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="31dp"
+    android:viewportWidth="32"
+    android:viewportHeight="31">
+    <path
+        android:pathData="M3.5,16.5L12.2,27L28.5,4"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
