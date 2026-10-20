@@ -34,7 +34,7 @@
         android:theme="@style/Theme.Prism">
 
         <activity
-            android:name=".HomeActivity"
+            android:name=".screens.home.HomeActivity"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="true"
@@ -50,13 +50,13 @@
         </activity>
 
         <activity
-            android:name=".IntroActivity"
+            android:name=".screens.intro.IntroActivity"
             android:exported="false"
             android:screenOrientation="landscape" />
 
         <!-- App entry (own tile / other launchers): setup if not default Home, else Settings. -->
         <activity
-            android:name=".SettingsActivity"
+            android:name=".screens.settings.SettingsActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:screenOrientation="landscape">
@@ -69,7 +69,7 @@
 
         <!-- Aerials started by Glass (Home idle timer, Settings preview). -->
         <activity
-            android:name=".ScreenSaverActivity"
+            android:name=".screens.saver.ScreenSaverActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:noHistory="true"
@@ -77,13 +77,13 @@
             android:theme="@style/Theme.Prism" />
 
         <activity
-            android:name=".ChooseAerialsActivity"
+            android:name=".screens.saver.ChooseAerialsActivity"
             android:exported="false"
             android:screenOrientation="landscape" />
 
         <!-- Other apps' notifications for Home's control strip (grant: Notification access / ADB). -->
         <service
-            android:name=".NotificationService"
+            android:name=".data.NotificationService"
             android:exported="true"
             android:label="@string/app_name"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
@@ -94,7 +94,7 @@
 
         <!-- System screen saver: pick "Prism Aerials" in TV settings (or via ADB). -->
         <service
-            android:name=".AerialDream"
+            android:name=".screens.saver.AerialDream"
             android:exported="true"
             android:label="@string/saver_dream_name"
             android:permission="android.permission.BIND_DREAM_SERVICE">
