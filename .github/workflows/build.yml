@@ -68,31 +68,46 @@ jobs:
           esac
           ./gradlew $TASKS $ABI_ARGS --console=plain
 
+      # Release and debug APKs go into separate folders and separate downloadable artifacts.
       - name: Collect APKs
         run: |
           VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
-          mkdir -p dist
+          mkdir -p dist/release dist/debug
           for apk in $(find app/build/outputs/apk -name '*.apk'); do
             # app-arm64-v8a-release.apk -> prism-0.1.0-arm64-v8a-release.apk; app-release.apk -> prism-0.1.0-universal-release.apk
             name=$(basename "$apk" .apk); name=${name#app-}
             case "$name" in release|debug) name="universal-$name" ;; esac
-            cp "$apk" "dist/prism-$VERSION-$name.apk"
+            case "$name" in *-debug) dir=debug ;; *) dir=release ;; esac
+            cp "$apk" "dist/$dir/prism-$VERSION-$name.apk"
           done
           {
             echo "### Prism $VERSION: $ARCH / $TYPE"
             echo
             echo "Signed with $SIGNING."
-            echo
-            echo '| APK | Size |'
-            echo '|---|---|'
-            for f in dist/*.apk; do echo "| $(basename "$f") | $(du -h "$f" | cut -f1) |"; done
+            for dir in release debug; do
+              ls dist/$dir/*.apk >/dev/null 2>&1 || continue
+              echo
+              echo "**$dir**"
+              echo
+              echo '| APK | Size |'
+              echo '|---|---|'
+              for f in dist/$dir/*.apk; do echo "| $(basename "$f") | $(du -h "$f" | cut -f1) |"; done
+            done
           } >> "$GITHUB_STEP_SUMMARY"
-          ls -la dist
+          ls -laR dist
 
       - uses: actions/upload-artifact@v4
+        if: inputs.option_2 != 'debug'
         with:
-          name: prism-apks-${{ inputs.option_1 }}-${{ inputs.option_2 }}-${{ github.run_number }}
-          path: dist/*.apk
+          name: prism-release-${{ inputs.option_1 }}-${{ github.run_number }}
+          path: dist/release/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.option_2 != 'release'
+        with:
+          name: prism-debug-${{ inputs.option_1 }}-${{ github.run_number }}
+          path: dist/debug/*.apk
           if-no-files-found: error
 
       # Prism's About -> Check for Updates reads releases/latest and installs prism-<v>-<abi>-release.apk.
@@ -103,7 +118,7 @@ jobs:
         run: |
           VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
           if gh release view "v$VERSION" >/dev/null 2>&1; then
-            gh release upload "v$VERSION" dist/*-release.apk --clobber
+            gh release upload "v$VERSION" dist/release/*.apk --clobber
           else
-            gh release create "v$VERSION" dist/*-release.apk --title "Prism $VERSION" --generate-notes --target "$GITHUB_SHA"
+            gh release create "v$VERSION" dist/release/*.apk --title "Prism $VERSION" --generate-notes --target "$GITHUB_SHA"
           fi
